@@ -74,6 +74,7 @@ public:
 	void SetMorphTargets ( const std::vector<std::pair<size_t, size_t>>& targets,
 	                      const AudioTransportN::BarycentricWeights& weights );
 	void ClearMorphTargets ( );
+	bool SetMorphTargetsFromKNN ( const glm::vec3& position, int k = 3 );
 
 	int GetSampleRate() const { return mSampleRate.load(); }
 

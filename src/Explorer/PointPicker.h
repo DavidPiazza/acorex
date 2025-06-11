@@ -8,9 +8,24 @@
 #include <ofCamera.h>
 #include <ofEvents.h>
 #include <mutex>
+#include <vector>
 
 namespace Acorex {
 namespace Explorer {
+
+struct KNNResult {
+	std::vector<Utils::PointFT> points;
+	std::vector<double> distances;
+	std::vector<double> weights;
+	
+	void clear() {
+		points.clear();
+		distances.clear();
+		weights.clear();
+	}
+	
+	size_t size() const { return points.size(); }
+};
 
 class PointPicker {
 public:
@@ -32,6 +47,14 @@ public:
 	bool FindNearestToPosition (const glm::vec3& position, Utils::PointFT& nearestPoint, Utils::PointFT currentPoint, 
 								int maxAllowedDistanceSpaceX1000, int maxAllowedTargets, bool sameFileAllowed, 
 								int minTimeDiffSameFile, int remainingSamplesRequired, const Utils::AudioData& audioSet, size_t hopSize );
+	
+	// k-NN methods
+	bool FindKNearestToPosition(const glm::vec3& position, KNNResult& result, int k, 
+								double maxAllowedDistanceSpace, Utils::PointFT currentPoint, 
+								bool sameFileAllowed, int minTimeDiffSameFile, 
+								int remainingSamplesRequired, const Utils::AudioData& audioSet, size_t hopSize);
+	
+	void FindKNearestToMouse(KNNResult& result, int k = 3);
 
 	// Setters & Getters ----------------------------
 
@@ -81,6 +104,9 @@ private:
 
 	double maxAllowedDistanceFar = 0.05;
 	double maxAllowedDistanceNear = 0.01;
+	
+	// k-NN configuration
+	static constexpr int DEFAULT_K = 3;
 
 	fluid::algorithm::KDTree mKDTree;
 

@@ -978,3 +978,65 @@ void Explorer::AudioPlayback::ProcessNWayMorphFrame ( ofSoundBuffer* outBuffer, 
 		playhead->sampleIndex += crossfadeLength;
 	}
 }
+
+bool Explorer::AudioPlayback::SetMorphTargetsFromKNN ( const glm::vec3& position, int k )
+{
+	if ( !mPointPicker || !mRawView || !mRawView->GetAudioData() ) {
+		ofLogError ( "AudioPlayback" ) << "SetMorphTargetsFromKNN: Missing required components";
+		return false;
+	}
+	
+	// Get k nearest neighbors
+	Explorer::KNNResult knnResult;
+	
+	// Create dummy current point (for initial search)
+	Utils::PointFT currentPoint;
+	currentPoint.file = -1;
+	currentPoint.time = -1;
+	
+	// Use a reasonable search radius
+	double maxSearchDistance = 0.2; // 20% of normalized space
+	
+	// Get hop size for sample index calculation
+	size_t hopSize = 512; // Default hop size
+	if ( mRawView->IsTimeAnalysis() && mRawView->GetDataset()->analysisSettings.blocksize > 0 ) {
+		hopSize = mRawView->GetDataset()->analysisSettings.blocksize;
+	}
+	
+	// Find k nearest neighbors
+	if ( !mPointPicker->FindKNearestToPosition ( position, knnResult, k, maxSearchDistance, 
+	                                            currentPoint, true, 0, 4096, 
+	                                            *mRawView->GetAudioData(), hopSize ) ) {
+		ofLogWarning ( "AudioPlayback" ) << "SetMorphTargetsFromKNN: No neighbors found";
+		return false;
+	}
+	
+	// Convert KNN results to morph targets
+	std::vector<std::pair<size_t, size_t>> targets;
+	AudioTransportN::BarycentricWeights weights;
+	
+	for ( size_t i = 0; i < knnResult.size(); ++i ) {
+		// Load audio file if needed
+		if ( !LoadAudioFile ( knnResult.points[i].file ) ) {
+			ofLogWarning ( "AudioPlayback" ) << "SetMorphTargetsFromKNN: Failed to load file " 
+			                                  << knnResult.points[i].file;
+			continue;
+		}
+		
+		// Calculate sample index
+		size_t sampleIndex = knnResult.points[i].time * hopSize;
+		
+		// Add to targets
+		targets.push_back ( std::make_pair ( knnResult.points[i].file, sampleIndex ) );
+		weights.push_back ( knnResult.weights[i] );
+	}
+	
+	// Set the morph targets if we have at least 2
+	if ( targets.size() >= 2 ) {
+		SetMorphTargets ( targets, weights );
+		return true;
+	}
+	
+	ofLogWarning ( "AudioPlayback" ) << "SetMorphTargetsFromKNN: Insufficient valid targets";
+	return false;
+}

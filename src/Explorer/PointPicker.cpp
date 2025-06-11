@@ -3,6 +3,9 @@
 
 #include <ofGraphics.h>
 #include <of3DGraphics.h>
+#include <queue>
+#include <algorithm>
+#include <cmath>
 
 using namespace Acorex;
 
@@ -435,4 +438,172 @@ bool Explorer::PointPicker::FindNearestToPosition ( const glm::vec3& position, U
 void Explorer::PointPicker::MouseReleased ( ofMouseEventArgs& args )
 {
     if ( args.button == 2 ) { bClicked = true; }
+}
+
+bool Explorer::PointPicker::FindKNearestToPosition(const glm::vec3& position, KNNResult& result, int k, 
+                                                   double maxAllowedDistanceSpace, Utils::PointFT currentPoint, 
+                                                   bool sameFileAllowed, int minTimeDiffSameFile, 
+                                                   int remainingSamplesRequired, const Utils::AudioData& audioSet, size_t hopSize)
+{
+    result.clear();
+    
+    if (!bTrained || k <= 0) { return false; }
+    
+    if (mPointPickerMutex.try_lock())
+    {
+        std::lock_guard<std::mutex> lock(mPointPickerMutex, std::adopt_lock);
+        
+        fluid::RealVector query;
+        
+        if (!b3D)
+        {
+            // 2D mode
+            glm::vec2 position2D;
+            
+            if (!bDimensionsFilled[0]) { position2D.x = position.y; position2D.y = position.z; }
+            if (!bDimensionsFilled[1]) { position2D.x = position.x; position2D.y = position.z; }
+            if (!bDimensionsFilled[2]) { position2D.x = position.x; position2D.y = position.y; }
+            
+            query = fluid::RealVector(2);
+            query[0] = ofMap(position2D.x, SpaceDefs::mSpaceMin, SpaceDefs::mSpaceMax, 0.0, 1.0, false);
+            query[1] = ofMap(position2D.y, SpaceDefs::mSpaceMin, SpaceDefs::mSpaceMax, 0.0, 1.0, false);
+        }
+        else
+        {
+            // 3D mode
+            query = fluid::RealVector(3);
+            query[0] = ofMap(position.x, SpaceDefs::mSpaceMin, SpaceDefs::mSpaceMax, 0.0, 1.0, false);
+            query[1] = ofMap(position.y, SpaceDefs::mSpaceMin, SpaceDefs::mSpaceMax, 0.0, 1.0, false);
+            query[2] = ofMap(position.z, SpaceDefs::mSpaceMin, SpaceDefs::mSpaceMax, 0.0, 1.0, false);
+        }
+        
+        // Get more candidates than k to account for filtering
+        int candidateK = std::min(k * 3, (int)mKDTree.size());
+        auto [dist, id] = mKDTree.kNearest(query, candidateK, maxAllowedDistanceSpace);
+        
+        if (dist.size() == 0) { return false; }
+        
+        // Process candidates and filter based on constraints
+        for (size_t i = 0; i < dist.size() && result.size() < k; ++i)
+        {
+            int point = std::stoi(*id[i]);
+            int fileIdx = mCorpusFileLookUp[point];
+            int timeIdx = mCorpusTimeLookUp[point];
+            
+            // Check file constraint
+            if (!sameFileAllowed && fileIdx == currentPoint.file) { continue; }
+            
+            // Check time difference constraint
+            if (sameFileAllowed && fileIdx == currentPoint.file)
+            {
+                size_t timeDiff = timeIdx > currentPoint.time ?
+                                  timeIdx - currentPoint.time :
+                                  currentPoint.time - timeIdx;
+                if (timeDiff < minTimeDiffSameFile) { continue; }
+            }
+            
+            // Check remaining samples constraint
+            if (audioSet.raw[fileIdx].getNumFrames() - ((size_t)timeIdx * hopSize) < remainingSamplesRequired)
+            {
+                continue;
+            }
+            
+            // Add valid point to result
+            Utils::PointFT pt;
+            pt.file = fileIdx;
+            pt.time = timeIdx;
+            
+            result.points.push_back(pt);
+            result.distances.push_back(dist[i]);
+        }
+        
+        if (result.size() == 0) { return false; }
+        
+        // Calculate normalized weights using inverse distance weighting
+        result.weights.resize(result.size());
+        double totalWeight = 0.0;
+        
+        // Handle edge case where a point has zero distance
+        bool hasZeroDistance = false;
+        size_t zeroDistIndex = 0;
+        
+        for (size_t i = 0; i < result.distances.size(); ++i)
+        {
+            if (result.distances[i] < 1e-10) // Effectively zero
+            {
+                hasZeroDistance = true;
+                zeroDistIndex = i;
+                break;
+            }
+        }
+        
+        if (hasZeroDistance)
+        {
+            // If we have a zero distance point, give it all the weight
+            std::fill(result.weights.begin(), result.weights.end(), 0.0);
+            result.weights[zeroDistIndex] = 1.0;
+        }
+        else
+        {
+            // Calculate inverse distance weights
+            for (size_t i = 0; i < result.distances.size(); ++i)
+            {
+                result.weights[i] = 1.0 / result.distances[i];
+                totalWeight += result.weights[i];
+            }
+            
+            // Normalize weights to sum to 1.0
+            if (totalWeight > 0.0)
+            {
+                for (size_t i = 0; i < result.weights.size(); ++i)
+                {
+                    result.weights[i] /= totalWeight;
+                }
+            }
+        }
+        
+        return true;
+    }
+    
+    return false;
+}
+
+void Explorer::PointPicker::FindKNearestToMouse(KNNResult& result, int k)
+{
+    if (!bTrained) { return; }
+    
+    int mouseX = ofGetMouseX();
+    int mouseY = ofGetMouseY();
+    
+    glm::vec3 position;
+    
+    if (!b3D)
+    {
+        // 2D mode - use screen to world conversion
+        position = mCamera->screenToWorld(glm::vec3(mouseX, mouseY, 0));
+    }
+    else
+    {
+        // 3D mode - use ray casting to find position
+        glm::vec3 rayDirection = mCamera->screenToWorld(glm::vec3((float)mouseX, (float)mouseY, 0.0f));
+        rayDirection = glm::normalize(rayDirection - mCamera->getPosition());
+        
+        // Use a default depth for 3D picking
+        float depth = 1000.0f;
+        position = mCamera->getPosition() + rayDirection * depth;
+    }
+    
+    // Use a reasonable max distance based on zoom
+    double maxDist = b3D ? 0.1 : ofMap(mCamera->getScale().x, SpaceDefs::mZoomMin2D, SpaceDefs::mZoomMax2D, 
+                                        maxAllowedDistanceNear * 1.5, maxAllowedDistanceFar * 1.5);
+    
+    // Create a dummy current point (not used for mouse picking)
+    Utils::PointFT dummyPoint;
+    dummyPoint.file = -1;
+    dummyPoint.time = -1;
+    
+    // Create a dummy audio set (not used for mouse picking)
+    Utils::AudioData dummyAudioSet;
+    
+    FindKNearestToPosition(position, result, k, maxDist, dummyPoint, true, 0, 0, dummyAudioSet, 1);
 }

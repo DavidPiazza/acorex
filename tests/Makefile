@@ -83,18 +83,24 @@ TARGET1 = test_audiotransportn
 TARGET2 = test_phase_interpolation
 TARGET3 = test_transport_frame_cache
 TARGET4 = test_audio_morph_engine
+TARGET5 = test_barycentric_weights
+TARGET6 = test_weight_integration
 
 SOURCES1 = TestAudioTransportN.cpp ../src/Explorer/AudioTransportN.cpp ../src/Explorer/SIMDUtils.cpp
 SOURCES2 = TestPhaseInterpolation.cpp ../src/Explorer/AudioTransportN.cpp ../src/Explorer/SIMDUtils.cpp
 SOURCES3 = TestTransportFrameCache.cpp
 SOURCES4 = TestAudioMorphEngine.cpp ../src/Explorer/AudioMorphEngine.cpp ../src/Explorer/AudioTransportN.cpp ../src/Explorer/SIMDUtils.cpp
+SOURCES5 = TestBarycentricWeights.cpp ../src/Explorer/AudioMorphEngine.cpp ../src/Explorer/AudioTransportN.cpp ../src/Explorer/SIMDUtils.cpp
+SOURCES6 = TestWeightIntegration.cpp ../src/Explorer/AudioMorphEngine.cpp ../src/Explorer/AudioTransportN.cpp ../src/Explorer/SIMDUtils.cpp
 
 OBJECTS1 = $(SOURCES1:.cpp=.o)
 OBJECTS2 = $(SOURCES2:.cpp=.o)
 OBJECTS3 = $(SOURCES3:.cpp=.o)
 OBJECTS4 = $(SOURCES4:.cpp=.o)
+OBJECTS5 = $(SOURCES5:.cpp=.o)
+OBJECTS6 = $(SOURCES6:.cpp=.o)
 
-all: $(TARGET1) $(TARGET2) $(TARGET3) $(TARGET4)
+all: $(TARGET1) $(TARGET2) $(TARGET3) $(TARGET4) $(TARGET5) $(TARGET6)
 
 $(TARGET1): $(OBJECTS1)
 	$(CXX) $(CXXFLAGS) $(OBJECTS1) $(LDFLAGS) -o $(TARGET1)
@@ -125,6 +131,46 @@ $(TARGET4): $(OBJECTS4)
 		-lz -lbz2 -liconv \
 		-o $(TARGET4)
 
+$(TARGET5): $(OBJECTS5)
+	$(CXX) $(CXXFLAGS) $(OBJECTS5) $(LDFLAGS) -pthread \
+		-lopenFrameworks \
+		../../../../libs/fmod/lib/osx/libfmod.dylib \
+		../../../../libs/freetype/lib/osx/freetype.a \
+		../../../../libs/FreeImage/lib/osx/freeimage.a \
+		../../../../libs/cairo/lib/osx/cairo.a \
+		../../../../libs/cairo/lib/osx/pixman-1.a \
+		../../../../libs/cairo/lib/osx/png.a \
+		../../../../libs/boost/lib/osx/boost_system.a \
+		../../../../libs/boost/lib/osx/boost_filesystem.a \
+		../../../../libs/curl/lib/osx/curl.a \
+		../../../../libs/rtAudio/lib/osx/rtaudio.a \
+		../../../../libs/tess2/lib/osx/tess2.a \
+		../../../../libs/glfw/lib/osx/glfw3.a \
+		../../../../libs/glew/lib/osx/glew.a \
+		../../../../libs/uriparser/lib/osx/uriparser.a \
+		-lz -lbz2 -liconv \
+		-o $(TARGET5)
+
+$(TARGET6): $(OBJECTS6)
+	$(CXX) $(CXXFLAGS) $(OBJECTS6) $(LDFLAGS) -pthread \
+		-lopenFrameworks \
+		../../../../libs/fmod/lib/osx/libfmod.dylib \
+		../../../../libs/freetype/lib/osx/freetype.a \
+		../../../../libs/FreeImage/lib/osx/freeimage.a \
+		../../../../libs/cairo/lib/osx/cairo.a \
+		../../../../libs/cairo/lib/osx/pixman-1.a \
+		../../../../libs/cairo/lib/osx/png.a \
+		../../../../libs/boost/lib/osx/boost_system.a \
+		../../../../libs/boost/lib/osx/boost_filesystem.a \
+		../../../../libs/curl/lib/osx/curl.a \
+		../../../../libs/rtAudio/lib/osx/rtaudio.a \
+		../../../../libs/tess2/lib/osx/tess2.a \
+		../../../../libs/glfw/lib/osx/glfw3.a \
+		../../../../libs/glew/lib/osx/glew.a \
+		../../../../libs/uriparser/lib/osx/uriparser.a \
+		-lz -lbz2 -liconv \
+		-o $(TARGET6)
+
 %.o: %.cpp
 	$(CXX) $(CXXFLAGS) $(INCLUDES) $(DEFINES) -c $< -o $@
 
@@ -141,7 +187,13 @@ run_cache: $(TARGET3)
 run_morph: $(TARGET4)
 	./$(TARGET4)
 
-run_all: $(TARGET1) $(TARGET2) $(TARGET3) $(TARGET4)
+run_weights: $(TARGET5)
+	./$(TARGET5)
+
+run_integration: $(TARGET6)
+	./$(TARGET6)
+
+run_all: $(TARGET1) $(TARGET2) $(TARGET3) $(TARGET4) $(TARGET5) $(TARGET6)
 	@echo "=== Running AudioTransportN Tests ==="
 	./$(TARGET1)
 	@echo "\n=== Running Phase Interpolation Tests ==="
@@ -150,8 +202,12 @@ run_all: $(TARGET1) $(TARGET2) $(TARGET3) $(TARGET4)
 	./$(TARGET3)
 	@echo "\n=== Running Audio Morph Engine Tests ==="
 	./$(TARGET4)
+	@echo "\n=== Running Barycentric Weights Tests ==="
+	./$(TARGET5)
+	@echo "\n=== Running Weight Integration Tests ==="
+	./$(TARGET6)
 
 clean:
-	rm -f $(OBJECTS1) $(OBJECTS2) $(OBJECTS3) $(OBJECTS4) $(TARGET1) $(TARGET2) $(TARGET3) $(TARGET4)
+	rm -f $(OBJECTS1) $(OBJECTS2) $(OBJECTS3) $(OBJECTS4) $(OBJECTS5) $(OBJECTS6) $(TARGET1) $(TARGET2) $(TARGET3) $(TARGET4) $(TARGET5) $(TARGET6)
 
-.PHONY: all run run_phase run_cache run_morph run_all clean
+.PHONY: all run run_phase run_cache run_morph run_weights run_integration run_all clean

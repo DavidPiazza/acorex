@@ -192,6 +192,25 @@ private:
         const std::vector<std::vector<SpetralMass>>& masses,
         const BarycentricWeights& weights,
         std::vector<std::tuple<std::vector<fluid::index>, double>>& transport);
+    
+    /**
+     * Segment spectrum into spectral masses
+     * Adapted from FluCoMa's AudioTransport
+     */
+    std::vector<SpetralMass> segmentSpectrum(
+        const Eigen::Ref<Eigen::ArrayXd> mag,
+        const Eigen::Ref<Eigen::ArrayXd> reassignedFreq,
+        fluid::Allocator& alloc);
+    
+    /**
+     * Place a spectral mass at a given bin location
+     * Adapted from FluCoMa's AudioTransport
+     */
+    void placeMass(const SpetralMass mass, fluid::index bin, double scale,
+                   double centerPhase, const Eigen::Ref<Eigen::ArrayXcd> input, 
+                   Eigen::Ref<Eigen::ArrayXcd> output,
+                   double nextPhase, Eigen::Ref<Eigen::ArrayXd> amplitudes, 
+                   Eigen::Ref<Eigen::ArrayXd> phases);
 };
 
 // Template implementation for fixed-size processing

@@ -168,6 +168,7 @@ void AudioTransportN::processFrameN(
     
     // Process each frame through STFT
     std::vector<double> totalMagnitudes(nSources, 0.0);
+    std::vector<std::vector<SpetralMass>> spectralMasses(nSources);
     
     for (size_t i = 0; i < nSources; ++i) {
         // Copy frame data to Eigen array
@@ -188,6 +189,13 @@ void AudioTransportN::processFrameN(
         // Compute reassigned frequencies
         mReassignedFreqBuffers[i] = mBinFreqs.head(mBins) - 
             (mSpectraDhBuffers[i] / mSpectraBuffers[i]).imag();
+        
+        // Segment spectrum into masses
+        if (totalMagnitudes[i] > 0) {
+            spectralMasses[i] = segmentSpectrum(mMagnitudeBuffers[i], 
+                                               mReassignedFreqBuffers[i], 
+                                               mAllocator);
+        }
     }
     
     // Check if all sources are silent
@@ -206,39 +214,68 @@ void AudioTransportN::processFrameN(
     // Initialize accumulator
     mAccumulatorSpectrum.setZero();
     
-    // Compute N-way spectral interpolation
-    // For now, use a simplified approach - we'll implement full N-way transport in the next subtask
+    // Compute N-way optimal transport
+    std::vector<std::tuple<std::vector<fluid::index>, double>> transportPlan;
+    computeNWayTransport(spectralMasses, weights, transportPlan);
     
-    // Magnitude interpolation using weighted geometric mean
-    mAccumulatorMagnitude.setOnes();
-    for (size_t i = 0; i < nSources; ++i) {
-        if (weights[i] > 0 && totalMagnitudes[i] > 0) {
-            // Weighted geometric mean: product(mag_i^weight_i)
-            mAccumulatorMagnitude *= (mMagnitudeBuffers[i] + 1e-10).pow(weights[i]);
+    // Pre-allocate phase tracking arrays
+    Eigen::ArrayXd newAmplitudes = Eigen::ArrayXd::Zero(mBins);
+    Eigen::ArrayXd newPhases = Eigen::ArrayXd::Zero(mBins);
+    
+    // Apply transport plan
+    for (const auto& transport : transportPlan) {
+        const auto& indices = std::get<0>(transport);
+        const double transportMass = std::get<1>(transport);
+        
+        // Compute barycentric position for this transport
+        double interpolatedBin = 0.0;
+        double totalWeight = 0.0;
+        
+        for (size_t s = 0; s < nSources; ++s) {
+            if (indices[s] >= 0 && indices[s] < spectralMasses[s].size()) {
+                interpolatedBin += weights[s] * spectralMasses[s][indices[s]].centerBin;
+                totalWeight += weights[s];
+            }
+        }
+        
+        if (totalWeight > 0) {
+            interpolatedBin /= totalWeight;
+        }
+        
+        fluid::index targetBin = std::lrint(interpolatedBin);
+        if (targetBin < 0) targetBin = 0;
+        if (targetBin >= mBins) targetBin = mBins - 1;
+        
+        // Compute interpolated reassigned frequency
+        double interpolatedFreq = 0.0;
+        for (size_t s = 0; s < nSources; ++s) {
+            if (indices[s] >= 0 && indices[s] < spectralMasses[s].size() && weights[s] > 0) {
+                fluid::index centerBin = spectralMasses[s][indices[s]].centerBin;
+                if (centerBin >= 0 && centerBin < mBins) {
+                    interpolatedFreq += weights[s] * mReassignedFreqBuffers[s](centerBin);
+                }
+            }
+        }
+        
+        // Phase tracking
+        double nextPhase = mPhase(targetBin) + interpolatedFreq * mHopSize;
+        double centerPhase = nextPhase - mPhaseDiff(targetBin);
+        
+        // Place masses from all sources
+        for (size_t s = 0; s < nSources; ++s) {
+            if (indices[s] >= 0 && indices[s] < spectralMasses[s].size() && weights[s] > 0) {
+                const SpetralMass& mass = spectralMasses[s][indices[s]];
+                double scale = weights[s] * transportMass / mass.mass;
+                
+                placeMass(mass, targetBin, scale, centerPhase,
+                         mSpectraBuffers[s], mAccumulatorSpectrum, 
+                         nextPhase, newAmplitudes, newPhases);
+            }
         }
     }
     
-    // Phase interpolation using circular statistics
-    Eigen::ArrayXd sinSum = Eigen::ArrayXd::Zero(mBins);
-    Eigen::ArrayXd cosSum = Eigen::ArrayXd::Zero(mBins);
-    
-    for (size_t i = 0; i < nSources; ++i) {
-        if (weights[i] > 0 && totalMagnitudes[i] > 0) {
-            // Weight phases by both barycentric weight and local magnitude
-            Eigen::ArrayXd weightedMag = weights[i] * mMagnitudeBuffers[i];
-            sinSum += weightedMag * mPhaseBuffers[i].sin();
-            cosSum += weightedMag * mPhaseBuffers[i].cos();
-        }
-    }
-    
-    // Compute circular mean phase
-    mAccumulatorPhase = sinSum.binaryExpr(cosSum, 
-        [](double s, double c) { return std::atan2(s, c); });
-    
-    // Reconstruct complex spectrum
-    for (fluid::index i = 0; i < mBins; ++i) {
-        mAccumulatorSpectrum(i) = std::polar(mAccumulatorMagnitude(i), mAccumulatorPhase(i));
-    }
+    // Update phase tracking
+    mPhase = newPhases;
     
     // Inverse transform
     Eigen::ArrayXd output(frames[0].size());
@@ -294,61 +331,240 @@ void AudioTransportN::computeNWayTransport(
     const BarycentricWeights& weights,
     std::vector<std::tuple<std::vector<fluid::index>, double>>& transport) {
     
-    // This is a placeholder for the full N-way optimal transport implementation
-    // For now, we'll implement a simplified version that works but isn't optimal
-    
     transport.clear();
     
-    // TODO: Implement full N-way Wasserstein barycenters
-    // This requires solving a more complex optimization problem
-    // For now, we use a heuristic approach
+    if (masses.empty() || masses[0].empty()) return;
     
-    if (masses.empty()) return;
+    const size_t nSources = masses.size();
     
-    // Find the source with maximum weight as reference
-    size_t refIdx = 0;
-    double maxWeight = weights[0];
-    for (size_t i = 1; i < weights.size(); ++i) {
-        if (weights[i] > maxWeight) {
-            maxWeight = weights[i];
-            refIdx = i;
+    // Build unified mass list with source indices
+    struct IndexedMass {
+        fluid::index sourceIdx;
+        fluid::index massIdx;
+        fluid::index centerBin;
+        double mass;
+    };
+    
+    std::vector<IndexedMass> allMasses;
+    for (size_t s = 0; s < nSources; ++s) {
+        for (size_t m = 0; m < masses[s].size(); ++m) {
+            allMasses.push_back({
+                static_cast<fluid::index>(s),
+                static_cast<fluid::index>(m),
+                masses[s][m].centerBin,
+                masses[s][m].mass * weights[s]  // Pre-weight the masses
+            });
         }
     }
     
-    // For each mass in the reference source, find corresponding masses in other sources
-    for (size_t m = 0; m < masses[refIdx].size(); ++m) {
-        std::vector<fluid::index> indices(masses.size());
-        indices[refIdx] = m;
+    // Sort by center frequency for efficient clustering
+    std::sort(allMasses.begin(), allMasses.end(), 
+        [](const IndexedMass& a, const IndexedMass& b) {
+            return a.centerBin < b.centerBin;
+        });
+    
+    // Compute barycentric clusters using iterative refinement
+    // This implements a simplified version of the Wasserstein barycenter algorithm
+    const int MAX_ITERATIONS = 10;
+    const double CONVERGENCE_THRESHOLD = 1e-6;
+    
+    // Initialize cluster centers based on weighted average of all masses
+    std::vector<double> clusterCenters;
+    std::vector<std::vector<size_t>> clusterMembers;
+    
+    // Use adaptive clustering based on frequency distribution
+    
+    // Create initial clusters by partitioning the frequency space
+    const int nClusters = std::min(static_cast<int>(allMasses.size()), 
+                                  static_cast<int>(masses[0].size() * 2));
+    
+    clusterCenters.resize(nClusters);
+    clusterMembers.resize(nClusters);
+    
+    // Initialize cluster centers uniformly across frequency range
+    if (nClusters > 1) {
+        fluid::index minBin = allMasses.front().centerBin;
+        fluid::index maxBin = allMasses.back().centerBin;
+        for (int c = 0; c < nClusters; ++c) {
+            clusterCenters[c] = minBin + (maxBin - minBin) * c / (nClusters - 1.0);
+        }
+    } else {
+        clusterCenters[0] = allMasses[allMasses.size() / 2].centerBin;
+    }
+    
+    // Iterative refinement using Lloyd's algorithm adapted for Wasserstein space
+    for (int iter = 0; iter < MAX_ITERATIONS; ++iter) {
+        // Clear cluster assignments
+        for (auto& members : clusterMembers) {
+            members.clear();
+        }
         
-        // Simple nearest-neighbor matching for other sources
-        for (size_t s = 0; s < masses.size(); ++s) {
-            if (s != refIdx && !masses[s].empty()) {
-                // Find closest mass by center frequency
-                fluid::index refCenter = masses[refIdx][m].centerBin;
-                fluid::index bestMatch = 0;
-                fluid::index minDist = std::abs(masses[s][0].centerBin - refCenter);
+        // Assign masses to nearest cluster center
+        for (size_t i = 0; i < allMasses.size(); ++i) {
+            int bestCluster = 0;
+            double minDist = std::abs(allMasses[i].centerBin - clusterCenters[0]);
+            
+            for (int c = 1; c < nClusters; ++c) {
+                double dist = std::abs(allMasses[i].centerBin - clusterCenters[c]);
+                if (dist < minDist) {
+                    minDist = dist;
+                    bestCluster = c;
+                }
+            }
+            
+            clusterMembers[bestCluster].push_back(i);
+        }
+        
+        // Update cluster centers as weighted average
+        double maxShift = 0.0;
+        for (int c = 0; c < nClusters; ++c) {
+            if (clusterMembers[c].empty()) continue;
+            
+            double weightedSum = 0.0;
+            double totalMass = 0.0;
+            
+            for (size_t idx : clusterMembers[c]) {
+                weightedSum += allMasses[idx].centerBin * allMasses[idx].mass;
+                totalMass += allMasses[idx].mass;
+            }
+            
+            if (totalMass > 0) {
+                double newCenter = weightedSum / totalMass;
+                maxShift = std::max(maxShift, std::abs(newCenter - clusterCenters[c]));
+                clusterCenters[c] = newCenter;
+            }
+        }
+        
+        // Check convergence
+        if (maxShift < CONVERGENCE_THRESHOLD) {
+            break;
+        }
+    }
+    
+    // Build transport plan from clusters
+    for (int c = 0; c < nClusters; ++c) {
+        if (clusterMembers[c].empty()) continue;
+        
+        // For each cluster, create a transport tuple
+        std::vector<fluid::index> sourceIndices(nSources, -1);
+        double clusterMass = 0.0;
+        
+        // Find the best representative from each source in this cluster
+        std::vector<std::pair<fluid::index, double>> sourceBests(nSources, {-1, 1e9});
+        
+        for (size_t idx : clusterMembers[c]) {
+            const auto& m = allMasses[idx];
+            double dist = std::abs(m.centerBin - clusterCenters[c]);
+            
+            if (dist < sourceBests[m.sourceIdx].second) {
+                sourceBests[m.sourceIdx] = {m.massIdx, dist};
+            }
+            
+            clusterMass += m.mass;
+        }
+        
+        // Assign indices and check if all sources are represented
+        for (size_t s = 0; s < nSources; ++s) {
+            if (sourceBests[s].first != -1) {
+                sourceIndices[s] = sourceBests[s].first;
+            } else {
+                // Find nearest mass from missing source
+                double minDist = 1e9;
+                fluid::index bestIdx = 0;
                 
-                for (size_t i = 1; i < masses[s].size(); ++i) {
-                    fluid::index dist = std::abs(masses[s][i].centerBin - refCenter);
+                for (size_t m = 0; m < masses[s].size(); ++m) {
+                    double dist = std::abs(masses[s][m].centerBin - clusterCenters[c]);
                     if (dist < minDist) {
                         minDist = dist;
-                        bestMatch = i;
+                        bestIdx = m;
                     }
                 }
                 
-                indices[s] = bestMatch;
+                sourceIndices[s] = bestIdx;
             }
         }
         
-        // Add transport tuple with combined mass
-        double combinedMass = 0.0;
-        for (size_t s = 0; s < masses.size(); ++s) {
-            if (indices[s] < masses[s].size()) {
-                combinedMass += weights[s] * masses[s][indices[s]].mass;
-            }
+        // Add transport tuple
+        transport.emplace_back(sourceIndices, clusterMass);
+    }
+    
+    // Normalize transport masses
+    double totalTransportMass = 0.0;
+    for (const auto& t : transport) {
+        totalTransportMass += std::get<1>(t);
+    }
+    
+    if (totalTransportMass > 0) {
+        for (auto& t : transport) {
+            std::get<1>(t) /= totalTransportMass;
+        }
+    }
+}
+
+std::vector<AudioTransportN::SpetralMass> AudioTransportN::segmentSpectrum(
+    const Eigen::Ref<Eigen::ArrayXd> mag,
+    const Eigen::Ref<Eigen::ArrayXd> reassignedFreq,
+    fluid::Allocator& alloc) {
+    
+    std::vector<SpetralMass> masses;
+    double totalMass = mag.sum() + 1e-10;  // epsilon for stability
+    
+    // Compute sign changes in reassigned frequencies vs bin frequencies
+    Eigen::ArrayXi sign = (reassignedFreq > mBinFreqs.head(reassignedFreq.size())).cast<int>();
+    Eigen::ArrayXi changed = Eigen::ArrayXi::Zero(mBins);
+    changed.segment(1, mBins - 1) = sign.segment(1, mBins - 1) - sign.segment(0, mBins - 1);
+    
+    SpetralMass currentMass{0, 0, 0, 0};
+    
+    for (fluid::index i = 1; i < mBins; i++) {
+        if (changed(i) == -1) {
+            // Local minimum found
+            double d1 = reassignedFreq(i - 1) - mBinFreqs(i - 1);
+            double d2 = mBinFreqs(i) - reassignedFreq(i);
+            currentMass.centerBin = d1 < d2 ? i - 1 : i;
         }
         
-        transport.emplace_back(indices, combinedMass);
+        if (changed(i) == 1) {
+            // End of current mass
+            currentMass.endBin = i;
+            currentMass.mass = mag.segment(currentMass.startBin, 
+                                         i - currentMass.startBin).sum() / totalMass;
+            masses.push_back(currentMass);
+            currentMass = SpetralMass{i, i, i, 0};
+        }
+    }
+    
+    // Add final mass
+    currentMass.endBin = mBins;
+    currentMass.mass = mag.segment(currentMass.startBin, 
+                                  mBins - currentMass.startBin).sum() / totalMass;
+    masses.push_back(currentMass);
+    
+    return masses;
+}
+
+void AudioTransportN::placeMass(const SpetralMass mass, fluid::index bin, double scale,
+                               double centerPhase, const Eigen::Ref<Eigen::ArrayXcd> input, 
+                               Eigen::Ref<Eigen::ArrayXcd> output,
+                               double nextPhase, Eigen::Ref<Eigen::ArrayXd> amplitudes, 
+                               Eigen::Ref<Eigen::ArrayXd> phases) {
+    
+    double phaseShift = centerPhase - std::arg(input(mass.centerBin));
+    
+    for (fluid::index i = mass.startBin; i < mass.endBin; i++) {
+        fluid::index pos = i + bin - mass.centerBin;
+        
+        if (pos < 0 || pos >= output.size()) continue;
+        
+        double phase = phaseShift + std::arg(input(i));
+        double mag = scale * std::abs(input(i));
+        
+        output(pos) += std::polar(mag, phase);
+        
+        if (mag > amplitudes(pos)) {
+            amplitudes(pos) = mag;
+            phases(pos) = nextPhase;
+        }
     }
 }
 

@@ -19,6 +19,7 @@ WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN 
 #include <cassert>
 #include <cmath>
 #include <random>
+#include <data/FluidMemory.hpp>
 
 using namespace Acorex::Explorer;
 
@@ -38,8 +39,7 @@ using namespace Acorex::Explorer;
 
 // Test weighted geometric mean calculation
 bool testWeightedGeometricMean() {
-    fluid::RT_MEMORY_POOL_NEW(RT_MEMORY_POOL_SMALL_SIZE, pool)
-    fluid::Allocator alloc(pool);
+    fluid::Allocator& alloc = fluid::FluidDefaultAllocator();
     
     AudioTransportN transport(2048, alloc);
     transport.initN(1024, 2048, 512);
@@ -118,8 +118,7 @@ bool testBarycentricWeights() {
 
 // Test reduction to pairwise case
 bool testPairwiseReduction() {
-    fluid::RT_MEMORY_POOL_NEW(RT_MEMORY_POOL_SMALL_SIZE, pool)
-    fluid::Allocator alloc(pool);
+    fluid::Allocator& alloc = fluid::FluidDefaultAllocator();
     
     AudioTransportN transport(2048, alloc);
     transport.initN(1024, 2048, 512);
@@ -159,8 +158,7 @@ bool testPairwiseReduction() {
 
 // Test N-way interpolation with known values
 bool testNWayInterpolation() {
-    fluid::RT_MEMORY_POOL_NEW(RT_MEMORY_POOL_SMALL_SIZE, pool)
-    fluid::Allocator alloc(pool);
+    fluid::Allocator& alloc = fluid::FluidDefaultAllocator();
     
     AudioTransportN transport(2048, alloc);
     transport.initN(1024, 2048, 512);
@@ -203,8 +201,7 @@ bool testNWayInterpolation() {
 
 // Test extreme weight distributions
 bool testExtremeWeights() {
-    fluid::RT_MEMORY_POOL_NEW(RT_MEMORY_POOL_SMALL_SIZE, pool)
-    fluid::Allocator alloc(pool);
+    fluid::Allocator& alloc = fluid::FluidDefaultAllocator();
     
     AudioTransportN transport(2048, alloc);
     transport.initN(1024, 2048, 512);

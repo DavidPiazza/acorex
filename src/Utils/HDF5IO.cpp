@@ -5,6 +5,7 @@
 #include <filesystem>
 #include <numeric>
 
+namespace Acorex {
 namespace Utils {
 
 // HDF5TransportIO implementation
@@ -470,7 +471,8 @@ bool HDF5DataSetIO::write(const std::string& jsonPath, const DataSet& dataset,
     DataSet datasetCopy = dataset;
     datasetCopy.transport.clear(); // Clear transport data from JSON
     
-    if (!JSON::Write(jsonPath, datasetCopy)) {
+    JSON json;
+    if (!json.Write(jsonPath, datasetCopy)) {
         return false;
     }
     
@@ -493,7 +495,8 @@ bool HDF5DataSetIO::write(const std::string& jsonPath, const DataSet& dataset,
 
 bool HDF5DataSetIO::read(const std::string& jsonPath, DataSet& dataset) {
     // Read main data from JSON
-    if (!JSON::Read(jsonPath, dataset)) {
+    JSON json;
+    if (!json.Read(jsonPath, dataset)) {
         return false;
     }
     
@@ -515,3 +518,4 @@ bool HDF5DataSetIO::read(const std::string& jsonPath, DataSet& dataset) {
 }
 
 } // namespace Utils
+} // namespace Acorex

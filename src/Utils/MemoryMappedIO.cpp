@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <fstream>
 
+namespace Acorex {
 namespace Utils {
 
 // MemoryMappedFile implementation
@@ -522,7 +523,8 @@ bool HybridDataSetIO::write(const std::string& jsonPath, const DataSet& dataset)
     DataSet datasetCopy = dataset;
     datasetCopy.transport.clear(); // Clear transport data from JSON
     
-    if (!JSON::Write(jsonPath, datasetCopy)) {
+    JSON json;
+    if (!json.Write(jsonPath, datasetCopy)) {
         return false;
     }
     
@@ -543,7 +545,8 @@ bool HybridDataSetIO::write(const std::string& jsonPath, const DataSet& dataset)
 
 bool HybridDataSetIO::read(const std::string& jsonPath, DataSet& dataset) {
     // Read main data from JSON
-    if (!JSON::Read(jsonPath, dataset)) {
+    JSON json;
+    if (!json.Read(jsonPath, dataset)) {
         return false;
     }
     
@@ -565,3 +568,4 @@ bool HybridDataSetIO::read(const std::string& jsonPath, DataSet& dataset) {
 }
 
 } // namespace Utils
+} // namespace Acorex

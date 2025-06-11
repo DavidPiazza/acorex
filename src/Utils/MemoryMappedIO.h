@@ -16,11 +16,13 @@
     #include <unistd.h>
 #endif
 
+namespace Acorex {
 namespace Utils {
 
 // Forward declarations
 struct TransportFrame;
 struct TransportData;
+struct DataSet;
 
 // Memory-mapped file wrapper class
 class MemoryMappedFile {
@@ -148,3 +150,4 @@ private:
 };
 
 } // namespace Utils
+} // namespace Acorex

@@ -79,7 +79,7 @@ OF_ROOT = ../../..
 # TODO: should this be a default setting?
 # PROJECT_LDFLAGS=-Wl,-rpath=./libs
 PROJECT_LDFLAGS = $(PROJECT_ROOT)/libs/libfoonathan_memory-0.7.3.a -Wl,-force_load,$(PROJECT_ROOT)/libs/libfoonathan_memory-0.7.3.a
-PROJECT_LDFLAGS += $(PROJECT_ROOT)/libs/libhdf5.a $(PROJECT_ROOT)/libs/libhdf5_cpp.a $(PROJECT_ROOT)/libs/libz.a
+PROJECT_LDFLAGS += -L/opt/homebrew/lib -lhdf5_cpp -lhdf5 -lz
 
 ################################################################################
 # PROJECT DEFINES
@@ -109,7 +109,7 @@ PROJECT_DEFINES = USE_OFX_DROPDOWN
 #   Note: Leave a leading space when adding list items with the += operator
 ################################################################################
 # PROJECT_CFLAGS = 
-PROJECT_CFLAGS = -I$(PROJECT_ROOT)/deps -I$(PROJECT_ROOT)/deps/memory -I$(PROJECT_ROOT)/deps/flucoma-core -I$(PROJECT_ROOT)/deps/hisstools_library
+PROJECT_CFLAGS = -I$(PROJECT_ROOT)/deps -I$(PROJECT_ROOT)/deps/memory -I$(PROJECT_ROOT)/deps/flucoma-core -I$(PROJECT_ROOT)/deps/hisstools_library -I/opt/homebrew/include
 
 ################################################################################
 # PROJECT OPTIMIZATION CFLAGS

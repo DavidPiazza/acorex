@@ -271,6 +271,7 @@ void Utils::from_json ( const nlohmann::json& j, TransportData& a )
 	TO_A ( frames );
 }
 
+// Hybrid I/O not implemented - requires MemoryMappedIO
 bool Utils::JSON::WriteHybrid ( const std::string& outputFile, const DataSet& dataset )
 {
 	try

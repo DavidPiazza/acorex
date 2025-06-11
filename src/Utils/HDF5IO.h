@@ -5,13 +5,12 @@
 #include <memory>
 #include <stdexcept>
 #include <H5Cpp.h>
+#include "Data.h"
 
+namespace Acorex {
 namespace Utils {
 
-// Forward declarations
-struct TransportFrame;
-struct TransportData;
-struct DataSet;
+// Forward declarations are no longer needed since we include Data.h
 
 // HDF5-based TransportData I/O
 class HDF5TransportIO {
@@ -92,3 +91,4 @@ private:
 };
 
 } // namespace Utils
+} // namespace Acorex

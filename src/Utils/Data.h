@@ -53,6 +53,12 @@ struct AnalysisSettings {
 	int minFreq = 20;
 	int maxFreq = 5000;
 	int sampleRate = 44100;
+	
+	// STFT-specific parameters for transport analysis
+	int transportFFTSize = 2048;      // FFT size for STFT transport analysis (can be different from main window)
+	int transportHopFraction = 4;     // Hop fraction for STFT transport analysis
+	bool transportStorePhase = true;  // Whether to store phase information
+	bool transportStoreDerivative = true; // Whether to store phase derivative (dH)
 };
 
 struct ReductionSettings {

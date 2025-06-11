@@ -95,7 +95,12 @@ void Utils::to_json ( nlohmann::json& j, const DataSet& a )
 		TO_J_SETTINGS ( nBands ),
 		TO_J_SETTINGS ( nCoefs ),
 		TO_J_SETTINGS ( minFreq ),
-		TO_J_SETTINGS ( maxFreq ) };
+		TO_J_SETTINGS ( maxFreq ),
+		TO_J_SETTINGS ( sampleRate ),
+		TO_J_SETTINGS ( transportFFTSize ),
+		TO_J_SETTINGS ( transportHopFraction ),
+		TO_J_SETTINGS ( transportStorePhase ),
+		TO_J_SETTINGS ( transportStoreDerivative ) };
 	
 	// Only include transport data if bTransport is true
 	if (a.analysisSettings.bTransport) {
@@ -130,6 +135,33 @@ void Utils::from_json ( const nlohmann::json& j, DataSet& a )
 	TO_A_SETTINGS ( nCoefs );
 	TO_A_SETTINGS ( minFreq );
 	TO_A_SETTINGS ( maxFreq );
+	// Handle optional sampleRate field for backward compatibility
+	if (j.contains("sampleRate")) {
+		TO_A_SETTINGS ( sampleRate );
+	} else {
+		a.analysisSettings.sampleRate = 44100; // Default value
+	}
+	// Handle optional transport parameters for backward compatibility
+	if (j.contains("transportFFTSize")) {
+		TO_A_SETTINGS ( transportFFTSize );
+	} else {
+		a.analysisSettings.transportFFTSize = 2048; // Default value
+	}
+	if (j.contains("transportHopFraction")) {
+		TO_A_SETTINGS ( transportHopFraction );
+	} else {
+		a.analysisSettings.transportHopFraction = 4; // Default value
+	}
+	if (j.contains("transportStorePhase")) {
+		TO_A_SETTINGS ( transportStorePhase );
+	} else {
+		a.analysisSettings.transportStorePhase = true; // Default value
+	}
+	if (j.contains("transportStoreDerivative")) {
+		TO_A_SETTINGS ( transportStoreDerivative );
+	} else {
+		a.analysisSettings.transportStoreDerivative = true; // Default value
+	}
 	
 	// Load transport data if present and bTransport is true
 	if (a.analysisSettings.bTransport && j.contains("transport")) {
@@ -153,7 +185,12 @@ void Utils::to_json ( nlohmann::json& j, const AnalysisSettings& a )
 		TO_J ( nBands ),
 		TO_J ( nCoefs ),
 		TO_J ( minFreq ),
-		TO_J ( maxFreq ) };
+		TO_J ( maxFreq ),
+		TO_J ( sampleRate ),
+		TO_J ( transportFFTSize ),
+		TO_J ( transportHopFraction ),
+		TO_J ( transportStorePhase ),
+		TO_J ( transportStoreDerivative ) };
 }
 
 void Utils::from_json ( const nlohmann::json& j, AnalysisSettings& a )
@@ -177,6 +214,33 @@ void Utils::from_json ( const nlohmann::json& j, AnalysisSettings& a )
 	TO_A ( nCoefs );
 	TO_A ( minFreq );
 	TO_A ( maxFreq );
+	// Handle optional sampleRate field for backward compatibility
+	if (j.contains("sampleRate")) {
+		TO_A ( sampleRate );
+	} else {
+		a.sampleRate = 44100; // Default value
+	}
+	// Handle optional transport parameters for backward compatibility
+	if (j.contains("transportFFTSize")) {
+		TO_A ( transportFFTSize );
+	} else {
+		a.transportFFTSize = 2048; // Default value
+	}
+	if (j.contains("transportHopFraction")) {
+		TO_A ( transportHopFraction );
+	} else {
+		a.transportHopFraction = 4; // Default value
+	}
+	if (j.contains("transportStorePhase")) {
+		TO_A ( transportStorePhase );
+	} else {
+		a.transportStorePhase = true; // Default value
+	}
+	if (j.contains("transportStoreDerivative")) {
+		TO_A ( transportStoreDerivative );
+	} else {
+		a.transportStoreDerivative = true; // Default value
+	}
 }
 
 void Utils::to_json ( nlohmann::json& j, const TransportFrame& a )

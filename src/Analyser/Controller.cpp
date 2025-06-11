@@ -184,6 +184,17 @@ std::vector<int> Analyser::Controller::MergeDatasets ( Utils::DataSet& primaryDa
 			{ // Time
 				pointCountDiff = additionalDataset.time.raw[i].size ( ) - primaryDataset.time.raw[existingIndex].size ( ); // TODO - DOUBLE CHECK THIS
 				primaryDataset.time.raw[existingIndex] = additionalDataset.time.raw[i];
+				
+				// Also overwrite transport data if enabled
+				if ( primaryDataset.analysisSettings.bTransport && additionalDataset.transport.hasFile(i) )
+				{
+					// Ensure we have enough space
+					while (primaryDataset.transport.frames.size() <= existingIndex)
+					{
+						primaryDataset.transport.addFile();
+					}
+					primaryDataset.transport.frames[existingIndex] = additionalDataset.transport.frames[i];
+				}
 			}
 			else
 			{ // Stats
@@ -207,6 +218,13 @@ std::vector<int> Analyser::Controller::MergeDatasets ( Utils::DataSet& primaryDa
 			{ // Time
 				pointCountDiff = additionalDataset.time.raw[i].size ( ); // TODO - DOUBLE CHECK THIS
 				primaryDataset.time.raw.push_back ( additionalDataset.time.raw[i] );
+				
+				// Also merge transport data if enabled
+				if ( primaryDataset.analysisSettings.bTransport && additionalDataset.transport.hasFile(i) )
+				{
+					primaryDataset.transport.addFile();
+					primaryDataset.transport.frames.back() = additionalDataset.transport.frames[i];
+				}
 			}
 			else
 			{ // Stats
@@ -295,11 +313,8 @@ void Analyser::Controller::GenerateDimensionNames ( std::vector<std::string>& di
 			}
 		}
 
-		// TODO: Add transport dimension names when bTransport is enabled (Task 2-3)
-		// if ( settings.bTransport )
-		// {
-		//     dimensionNames.push_back ( "Transport Frame Index" );
-		// }
+		// Transport data is stored separately in TransportData structure
+		// and does not have dimension names in the regular dimension list
 	}
 	else
 	{ // Stats

@@ -1,5 +1,8 @@
 #include "./GenAnalysis.h"
 #include <ofLog.h>
+#include <complex>
+#include <cmath>
+#include <memory>
 
 #if __has_include(<omp.h>)
 #include <omp.h>
@@ -56,8 +59,8 @@ int Analyser::GenAnalysis::ProcessFiles ( Utils::DataSet& dataset )
     fluid::index numLoudnessDimensions = dataset.analysisSettings.bLoudness ? 2 : 0;
     fluid::index numShapeDimensions = dataset.analysisSettings.bShape       ? 7 : 0;
     fluid::index numMFCCDimensions = dataset.analysisSettings.bMFCC         ? dataset.analysisSettings.nCoefs : 0;
-    // TODO: Add transport dimensions when bTransport is enabled (Task 2-3)
-    // fluid::index numTransportDimensions = dataset.analysisSettings.bTransport ? X : 0;
+    // Transport dimensions are not included in the regular dimension count
+    // as they are stored separately in the TransportData structure
 
     fluid::index numDimensions = numTimeDimensions + numPitchDimensions + numLoudnessDimensions + numShapeDimensions + numMFCCDimensions;
 
@@ -73,6 +76,20 @@ int Analyser::GenAnalysis::ProcessFiles ( Utils::DataSet& dataset )
     fluid::index nBins = dataset.analysisSettings.windowFFTSize / 2 + 1;
     fluid::index hopSize = dataset.analysisSettings.windowFFTSize / dataset.analysisSettings.hopFraction;
     fluid::index halfWindow = dataset.analysisSettings.windowFFTSize / 2;
+    
+    // Transport-specific STFT parameters
+    fluid::index transportNBins = 0;
+    fluid::index transportHopSize = 0;
+    fluid::index transportHalfWindow = 0;
+    if ( dataset.analysisSettings.bTransport && dataset.analysisSettings.bTime )
+    {
+        transportNBins = dataset.analysisSettings.transportFFTSize / 2 + 1;
+        transportHopSize = dataset.analysisSettings.transportFFTSize / dataset.analysisSettings.transportHopFraction;
+        transportHalfWindow = dataset.analysisSettings.transportFFTSize / 2;
+        
+        // Reserve space for transport data
+        dataset.transport.reserveFiles(dataset.fileList.size());
+    }
     
     //if ( dataset.analysisSettings.bTime )
     //{
@@ -106,6 +123,20 @@ int Analyser::GenAnalysis::ProcessFiles ( Utils::DataSet& dataset )
         fluid::algorithm::SpectralShape shape ( fluid::FluidDefaultAllocator ( ) );
         fluid::algorithm::Loudness loudness { dataset.analysisSettings.windowFFTSize };
         fluid::algorithm::MultiStats stats;
+        
+        // Transport-specific STFT if enabled
+        std::unique_ptr<fluid::algorithm::STFT> transportStft;
+        if ( dataset.analysisSettings.bTransport && dataset.analysisSettings.bTime )
+        {
+            transportStft = std::make_unique<fluid::algorithm::STFT>(
+                dataset.analysisSettings.transportFFTSize, 
+                dataset.analysisSettings.transportFFTSize, 
+                transportHopSize
+            );
+            
+            // Add a new file entry for this file
+            dataset.transport.addFile();
+        }
 
         bands.init ( dataset.analysisSettings.minFreq, dataset.analysisSettings.maxFreq, 
                     dataset.analysisSettings.nBands, nBins, samplingRate, dataset.analysisSettings.windowFFTSize );
@@ -121,6 +152,30 @@ int Analyser::GenAnalysis::ProcessFiles ( Utils::DataSet& dataset )
         fluid::RealMatrix shapeMat ( nFrames, 7 );
         std::fill ( padded.begin ( ), padded.end ( ), 0 );
         padded ( fluid::Slice ( halfWindow, in.size ( ) ) ) <<= in;
+        
+        // Transport-specific padded buffer if needed
+        fluid::RealVector transportPadded;
+        fluid::index transportNFrames = 0;
+        if ( dataset.analysisSettings.bTransport && dataset.analysisSettings.bTime )
+        {
+            // Use larger window size if transport FFT is bigger
+            if (dataset.analysisSettings.transportFFTSize > dataset.analysisSettings.windowFFTSize)
+            {
+                transportPadded.resize(in.size() + dataset.analysisSettings.transportFFTSize + transportHopSize);
+                std::fill(transportPadded.begin(), transportPadded.end(), 0);
+                transportPadded(fluid::Slice(transportHalfWindow, in.size())) <<= in;
+                transportNFrames = floor((transportPadded.size() - dataset.analysisSettings.transportFFTSize) / transportHopSize);
+            }
+            else
+            {
+                // Reuse the same padded buffer if transport FFT is smaller or equal
+                transportPadded = padded;
+                transportNFrames = floor((padded.size() - dataset.analysisSettings.transportFFTSize) / transportHopSize);
+            }
+            
+            // Reserve frame space for this file
+            dataset.transport.reserveFrames(analysedFileIndex, transportNFrames);
+        }
 
         for ( int frameIndex = 0; frameIndex < nFrames; frameIndex++ )
         {
@@ -164,12 +219,62 @@ int Analyser::GenAnalysis::ProcessFiles ( Utils::DataSet& dataset )
                 mfccMat.row ( frameIndex ) <<= mfccs;
             }
 
-            // TODO: Add transport analysis when bTransport is enabled (Task 2-3)
-            // if ( dataset.analysisSettings.bTransport && dataset.analysisSettings.bTime )
-            // {
-            //     // Compute and store STFT frames for transport matrix analysis
-            //     // This will be implemented in subsequent tasks
-            // }
+        }
+
+        // Process transport frames separately if enabled
+        if ( dataset.analysisSettings.bTransport && dataset.analysisSettings.bTime && transportStft )
+        {
+            // Previous frame for phase derivative calculation
+            fluid::ComplexVector prevFrame(transportNBins);
+            std::fill(prevFrame.begin(), prevFrame.end(), std::complex<double>(0, 0));
+            
+            for ( int frameIndex = 0; frameIndex < transportNFrames; frameIndex++ )
+            {
+                fluid::RealVectorView window = transportPadded(fluid::Slice(
+                    frameIndex * transportHopSize, 
+                    dataset.analysisSettings.transportFFTSize
+                ));
+                
+                fluid::ComplexVector frame(transportNBins);
+                transportStft->processFrame(window, frame);
+                
+                // Extract magnitude and phase
+                std::vector<double> magnitude(transportNBins);
+                std::vector<double> phase(transportNBins);
+                std::vector<double> dH(transportNBins);
+                
+                for (int bin = 0; bin < transportNBins; bin++)
+                {
+                    magnitude[bin] = std::abs(frame(bin));
+                    
+                    if (dataset.analysisSettings.transportStorePhase)
+                    {
+                        phase[bin] = std::arg(frame(bin));
+                    }
+                    
+                    if (dataset.analysisSettings.transportStoreDerivative && frameIndex > 0)
+                    {
+                        // Calculate phase derivative (instantaneous frequency)
+                        double phaseDiff = std::arg(frame(bin)) - std::arg(prevFrame(bin));
+                        
+                        // Wrap phase difference to [-pi, pi]
+                        while (phaseDiff > M_PI) phaseDiff -= 2 * M_PI;
+                        while (phaseDiff < -M_PI) phaseDiff += 2 * M_PI;
+                        
+                        dH[bin] = phaseDiff;
+                    }
+                }
+                
+                // Store the frame
+                dataset.transport.frames[analysedFileIndex].emplace_back(
+                    std::move(magnitude),
+                    dataset.analysisSettings.transportStorePhase ? std::move(phase) : std::vector<double>(),
+                    dataset.analysisSettings.transportStoreDerivative ? std::move(dH) : std::vector<double>()
+                );
+                
+                // Save current frame as previous for next iteration
+                prevFrame = frame;
+            }
         }
 
         if ( dataset.analysisSettings.bTime )

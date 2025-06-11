@@ -102,6 +102,17 @@ public:
                       fluid::RealMatrixView out);
     
     /**
+     * Process N-way interpolation using weighted geometric mean
+     * Simpler alternative to transport-based morphing
+     * @param frames Array of input frames (must match weights.size())
+     * @param weights Barycentric weights (must sum to 1.0)
+     * @param out Output matrix [audio, window]
+     */
+    void processFrameNGeometric(const std::vector<fluid::RealVectorView>& frames,
+                               const BarycentricWeights& weights,
+                               fluid::RealMatrixView out);
+    
+    /**
      * Process N-way interpolation with pre-allocated frame views
      * More efficient for real-time processing
      */

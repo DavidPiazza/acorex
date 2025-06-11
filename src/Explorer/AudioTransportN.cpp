@@ -293,13 +293,129 @@ void AudioTransportN::computeWeightedGeometricMean(
     const BarycentricWeights& weights,
     Eigen::ArrayXd& result) {
     
-    result.setOnes();
+    // Work in log domain for numerical stability
+    Eigen::ArrayXd logResult = Eigen::ArrayXd::Zero(result.size());
     
+    // Handle edge case: check if any weights are 1.0 (single source dominates)
     for (size_t i = 0; i < magnitudes.size(); ++i) {
-        if (weights[i] > 0) {
-            // Add small epsilon to avoid log(0)
-            result *= (magnitudes[i] + 1e-10).pow(weights[i]);
+        if (std::abs(weights[i] - 1.0) < 1e-6) {
+            // Single source has all the weight
+            result = magnitudes[i];
+            return;
         }
+    }
+    
+    // Compute weighted sum in log domain
+    for (size_t i = 0; i < magnitudes.size(); ++i) {
+        if (weights[i] > 1e-10) {  // Skip negligible weights
+            // Add small epsilon to avoid log(0), scale epsilon by weight to maintain proportions
+            const double epsilon = 1e-10 * weights[i];
+            logResult += weights[i] * (magnitudes[i] + epsilon).log();
+        }
+    }
+    
+    // Convert back from log domain
+    result = logResult.exp();
+    
+    // Handle any NaN or Inf values that might have occurred
+    for (fluid::index i = 0; i < result.size(); ++i) {
+        if (!std::isfinite(result[i])) {
+            result[i] = 0.0;
+        }
+    }
+}
+
+void AudioTransportN::processFrameNGeometric(
+    const std::vector<fluid::RealVectorView>& frames,
+    const BarycentricWeights& weights,
+    fluid::RealMatrixView out) {
+    
+    using namespace fluid::algorithm;
+    
+    // Validate inputs
+    if (frames.size() != weights.size()) {
+        throw std::invalid_argument("Number of frames must match number of weights");
+    }
+    
+    if (!weights.isValid()) {
+        throw std::invalid_argument("Barycentric weights must sum to 1.0");
+    }
+    
+    if (frames.size() > MAX_SOURCES) {
+        throw std::invalid_argument("Too many sources, maximum is " + std::to_string(MAX_SOURCES));
+    }
+    
+    if (!initialized()) {
+        throw std::runtime_error("AudioTransportN not initialized");
+    }
+    
+    const size_t nSources = frames.size();
+    
+    // Handle edge cases
+    if (nSources == 0) {
+        // Output silence
+        for (fluid::index i = 0; i < out.cols(); ++i) {
+            out(0, i) = 0.0;
+            out(1, i) = i < mWindowSize ? mWindowSquared(i) : 0.0;
+        }
+        return;
+    }
+    
+    if (nSources == 1) {
+        // Single source - just copy through with windowing
+        for (fluid::index i = 0; i < out.cols() && i < frames[0].size(); ++i) {
+            out(0, i) = frames[0][i];
+            out(1, i) = i < mWindowSize ? mWindowSquared(i) : 0.0;
+        }
+        return;
+    }
+    
+    if (nSources == 2 && mTransports[0]->initialized()) {
+        // Use optimized pairwise processing
+        mTransports[0]->processFrame(frames[0], frames[1], weights[1], out, mAllocator);
+        return;
+    }
+    
+    // N-way geometric mean processing (N >= 3)
+    
+    // Process each frame through STFT
+    for (size_t i = 0; i < nSources; ++i) {
+        // Copy frame data to Eigen array
+        Eigen::ArrayXd frame(frames[i].size());
+        for (fluid::index j = 0; j < frames[i].size(); ++j) {
+            frame(j) = frames[i][j];
+        }
+        
+        // Forward transform
+        mSTFT->processFrame(frame, mSpectraBuffers[i]);
+        
+        // Extract magnitude and phase
+        mMagnitudeBuffers[i] = mSpectraBuffers[i].abs();
+        mPhaseBuffers[i] = mSpectraBuffers[i].arg();
+    }
+    
+    // Compute weighted geometric mean of magnitudes
+    Eigen::ArrayXd interpolatedMagnitude(mBins);
+    computeWeightedGeometricMean(mMagnitudeBuffers, weights, interpolatedMagnitude);
+    
+    // Compute weighted circular mean of phases
+    Eigen::ArrayXd interpolatedPhase(mBins);
+    computeWeightedCircularMean(mPhaseBuffers, mMagnitudeBuffers, weights, interpolatedPhase);
+    
+    // Reconstruct spectrum from interpolated magnitude and phase
+    mAccumulatorSpectrum = Eigen::ArrayXcd::Zero(mBins);
+    for (fluid::index i = 0; i < mBins; ++i) {
+        mAccumulatorSpectrum(i) = std::polar(interpolatedMagnitude(i), interpolatedPhase(i));
+    }
+    
+    // Inverse transform
+    Eigen::ArrayXd output(frames[0].size());
+    mISTFT->processFrame(mAccumulatorSpectrum, output);
+    
+    // Write output
+    for (fluid::index i = 0; i < out.cols() && i < output.size(); ++i) {
+        out(0, i) = output(i);
+        out(1, i) = i < mWindowSize ? mWindowSquared(i) : 0.0;
     }
 }
 

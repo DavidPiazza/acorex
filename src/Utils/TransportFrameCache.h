@@ -1,25 +1,81 @@
 #pragma once
 
-#include <unordered_map>
+#include <functional>
 #include <list>
 #include <memory>
 #include <shared_mutex>
 #include <atomic>
 #include <chrono>
-#include <functional>
 #include <optional>
 #include "Data.h"
+#include <unordered_map>
+
+namespace Acorex {
+namespace Utils {
+
+// ---------------------------------------------------------------------------
+// FrameKey: identifies a unique frame in the corpus (file + frame index)
+// ---------------------------------------------------------------------------
+struct FrameKey {
+    size_t fileIndex;
+    size_t frameIndex;
+    
+    bool operator==(const FrameKey& other) const {
+        return fileIndex == other.fileIndex && frameIndex == other.frameIndex;
+    }
+};
+
+// Hash functor usable inside Acorex::Utils
+struct FrameKeyHash {
+    std::size_t operator()(const FrameKey& key) const noexcept {
+        return (std::hash<size_t>{}(key.fileIndex) ^ (std::hash<size_t>{}(key.frameIndex) << 1));
+    }
+};
+
+} // namespace Utils
+} // namespace Acorex
+
+// std::hash specialization for FrameKey (global namespace)
+namespace std {
+template<>
+struct hash<Acorex::Utils::FrameKey> {
+    std::size_t operator()(const Acorex::Utils::FrameKey& key) const noexcept {
+        return (std::hash<size_t>{}(key.fileIndex) ^ (std::hash<size_t>{}(key.frameIndex) << 1));
+    }
+};
+}
 
 namespace Acorex {
 namespace Utils {
 
 // Cache statistics structure
 struct CacheStats {
+    CacheStats() = default;
     std::atomic<size_t> hits{0};
     std::atomic<size_t> misses{0};
     std::atomic<size_t> evictions{0};
     std::atomic<size_t> currentSize{0};
     size_t maxSize{0};
+    
+    // Copy constructor – copies atomic values safely
+    CacheStats(const CacheStats& other) noexcept {
+        hits.store(other.hits.load());
+        misses.store(other.misses.load());
+        evictions.store(other.evictions.load());
+        currentSize.store(other.currentSize.load());
+        maxSize = other.maxSize;
+    }
+
+    CacheStats& operator=(const CacheStats& other) noexcept {
+        if (this != &other) {
+            hits.store(other.hits.load());
+            misses.store(other.misses.load());
+            evictions.store(other.evictions.load());
+            currentSize.store(other.currentSize.load());
+            maxSize = other.maxSize;
+        }
+        return *this;
+    }
     
     double getHitRate() const {
         size_t total = hits.load() + misses.load();
@@ -165,7 +221,7 @@ public:
     using MissHandler = std::function<std::optional<Value>(const Key&)>;
     
     explicit ThreadSafeLRUCache(size_t maxSize) 
-        : mCache(maxSize), mStats{} {
+        : mCache(maxSize) {
         mStats.maxSize = maxSize;
     }
     
@@ -289,26 +345,6 @@ private:
     MissHandler mMissHandler;
 };
 
-// Frame key for cache lookup
-struct FrameKey {
-    size_t fileIndex;
-    size_t frameIndex;
-    
-    bool operator==(const FrameKey& other) const {
-        return fileIndex == other.fileIndex && frameIndex == other.frameIndex;
-    }
-};
-
-// Hash function for FrameKey
-struct FrameKeyHash {
-    std::size_t operator()(const FrameKey& key) const {
-        // Combine hashes of both indices
-        std::size_t h1 = std::hash<size_t>{}(key.fileIndex);
-        std::size_t h2 = std::hash<size_t>{}(key.frameIndex);
-        return h1 ^ (h2 << 1);
-    }
-};
-
 // Forward declarations
 class TransportDataLoader;
 class FrameMemoryPool;
@@ -402,5 +438,6 @@ public:
     virtual bool hasFrame(size_t fileIndex, size_t frameIndex) const = 0;
 };
 
+// End of file
 } // namespace Utils
 } // namespace Acorex

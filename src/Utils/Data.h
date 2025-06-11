@@ -153,6 +153,9 @@ struct AnalysisSettings {
 	bool bTransport = false;
 	int windowFFTSize = 1024;
 	int hopFraction = 2;
+	// Hop size when exporting raw audio frames (mainly for time-analysis workflows)
+	// Historically referred to as "blocksize" in some modules.
+	int blocksize = 512;
 	int nBands = 40;
 	int nCoefs = 13;
 	int minFreq = 20;

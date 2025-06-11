@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <cstring>
 #include <numeric>
+#include <functional>
 
 namespace Acorex {
 namespace Utils {

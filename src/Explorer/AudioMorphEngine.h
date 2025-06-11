@@ -3,6 +3,10 @@
 #include <ofSoundBuffer.h>
 #include <vector>
 #include <mutex>
+#include <algorithms/public/KDTree.hpp>
+#include <data/TensorTypes.hpp>
+#include <memory>
+#include "AudioTransportN.hpp"
 
 namespace Acorex {
 namespace Explorer {
@@ -19,9 +23,32 @@ public:
     // number of frames and channels (typically stereo).
     void Process(ofSoundBuffer &outBuffer);
 
-    // Placeholder setters/getters for the KD-tree that will be integrated in later subtasks
-    void *GetKDTree() const { return mKDTree; }
-    void SetKDTree(void *kdTree) { mKDTree = kdTree; }
+    // KD-tree integration ----------------------------------------------
+    using KDTree = fluid::algorithm::KDTree;
+    using KNNResult = KDTree::KNNResult;
+    using BarycentricWeights = AudioTransportN::BarycentricWeights;
+
+    // Attach a pre-built KD-tree (shared ownership for thread-safety)
+    void SetKDTree(const std::shared_ptr<KDTree>& kdTree);
+
+    // Access the KD-tree (const) – returns nullptr if not set
+    const std::shared_ptr<KDTree>& GetKDTree() const { return mKDTree; }
+
+    /**
+     * Query the KD-tree for the k nearest frames to the provided playhead vector.
+     * @param query        Feature vector representing current playhead position
+     * @param k            Number of nearest neighbours to return (default 3)
+     * @param radius       Optional search radius (0 == unlimited)
+     * @return             KDTree::KNNResult (distances + id pointers). Empty if tree invalid.
+     */
+    KNNResult QueryKNearest(const fluid::RealVector& query, size_t k = 3, double radius = 0.0) const;
+
+    /**
+     * Convert KD-tree distances into barycentric weights.
+     * If gaussian==false, uses inverse distance weighting with exponent param (default 2).
+     * If gaussian==true, uses Gaussian kernel with sigma=param (param must be >0, default 0.2).
+     */
+    BarycentricWeights CalculateWeights(const KNNResult& knn, bool gaussian=false, double param=2.0) const;
 
     int GetSampleRate() const { return mSampleRate; }
     size_t GetBufferSize() const { return mBufferSize; }
@@ -44,11 +71,13 @@ private:
     size_t mReadPos  = 0;   // Next read index for output (may lead write during overlap)
     uint64_t mSampleCounter = 0; // Running total samples processed (for diagnostics)
 
-    // KD-tree pointer – real type will be introduced in a later subtask
-    void *mKDTree = nullptr;
+    // KD-tree instance (shared with other components)
+    std::shared_ptr<KDTree> mKDTree;
 
-    // Thread-safety for real-time operation
-    std::mutex mProcessMutex;
+    // Thread-safety for real-time operation (mutable for const query methods)
+    mutable std::mutex mProcessMutex;
+
+    static void NormalizeWeights(BarycentricWeights& w);
 };
 
 } // namespace Explorer

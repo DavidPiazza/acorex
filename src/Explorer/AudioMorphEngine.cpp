@@ -1,6 +1,9 @@
 #include "./AudioMorphEngine.h"
 #include "ofLog.h"
 #include <cmath>
+#include <utility> // for std::move if needed
+#include <numeric>
+#include <limits>
 
 using namespace Acorex;
 
@@ -87,6 +90,100 @@ void AudioMorphEngine::Process(ofSoundBuffer &outBuffer) {
         ++mSampleCounter;
     }
 }
+
+// ================= KD-tree Integration =============================
+
+void Acorex::Explorer::AudioMorphEngine::SetKDTree(const std::shared_ptr<KDTree>& kdTree) {
+    std::lock_guard<std::mutex> lock(mProcessMutex);
+    mKDTree = kdTree;
+    if (!mKDTree) {
+        ofLogWarning("AudioMorphEngine") << "KDTree pointer set to nullptr. Querying will be disabled.";
+    }
+}
+
+Acorex::Explorer::AudioMorphEngine::KNNResult
+Acorex::Explorer::AudioMorphEngine::QueryKNearest(const fluid::RealVector& query,
+                                                  size_t k,
+                                                  double radius) const {
+    // Fast path: early check without locking if KDTree is absent
+    if (!mKDTree) {
+        ofLogWarning("AudioMorphEngine") << "QueryKNearest called but KDTree not set.";
+        return {};
+    }
+
+    std::lock_guard<std::mutex> lock(mProcessMutex);
+
+    if (!mKDTree || !mKDTree->initialized()) {
+        ofLogWarning("AudioMorphEngine") << "KDTree not initialized. Returning empty result.";
+        return {};
+    }
+
+    // Guard against mismatched dimensionality
+    if (static_cast<size_t>(query.size()) != static_cast<size_t>(mKDTree->dims())) {
+        ofLogWarning("AudioMorphEngine") << "Query vector dimension " << query.size()
+                                          << " does not match KDTree dims " << mKDTree->dims()
+                                          << ". Returning empty result.";
+        return {};
+    }
+
+    // Perform search (radius == 0 => unlimited)
+    try {
+        auto result = mKDTree->kNearest(query, static_cast<fluid::index>(k), radius);
+        return result;
+    } catch (const std::exception& e) {
+        ofLogError("AudioMorphEngine") << "Exception during KDTree query: " << e.what();
+        return {};
+    }
+}
+
+// -------------------------------------------------------------------
+
+Acorex::Explorer::AudioMorphEngine::BarycentricWeights
+Acorex::Explorer::AudioMorphEngine::CalculateWeights(const KNNResult& knn,
+                                                      bool gaussian,
+                                                      double param) const {
+    BarycentricWeights weights(knn.first.size());
+    size_t n = knn.first.size();
+    if (n == 0) return weights; // defaults to 1 on first weight via ctor
+
+    // Edge case: if any distance is 0, return one-hot weight
+    for (size_t i = 0; i < n; ++i) {
+        if (knn.first[i] == 0.0) {
+            weights.weights.assign(n, 0.0);
+            weights[i] = 1.0;
+            return weights;
+        }
+    }
+
+    std::vector<double> raw(n, 0.0);
+    if (gaussian) {
+        double sigma = (param > 0.0) ? param : 0.2;
+        double twoSigma2 = 2.0 * sigma * sigma;
+        for (size_t i = 0; i < n; ++i) {
+            raw[i] = std::exp(- (knn.first[i] * knn.first[i]) / twoSigma2);
+        }
+    } else {
+        double p = (param > 0.0) ? param : 2.0;
+        for (size_t i = 0; i < n; ++i) {
+            raw[i] = 1.0 / std::pow(knn.first[i], p);
+        }
+    }
+
+    weights.weights = std::move(raw);
+    NormalizeWeights(weights);
+    return weights;
+}
+
+void Acorex::Explorer::AudioMorphEngine::NormalizeWeights(BarycentricWeights& w) {
+    double sum = std::accumulate(w.weights.begin(), w.weights.end(), 0.0);
+    if (sum <= std::numeric_limits<double>::epsilon()) {
+        if (!w.weights.empty()) { w.weights.assign(w.weights.size(), 0.0); w.weights[0] = 1.0; }
+        return;
+    }
+    for (double& v : w.weights) v /= sum;
+}
+
+// -------------------------------------------------------------------
 
 } // namespace Explorer
 } // namespace Acorex 

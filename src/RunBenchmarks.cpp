@@ -14,6 +14,11 @@ FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTH
 WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 */
 
+#ifndef ACOREX_ENABLE_BENCHMARK_MAIN
+#define ACOREX_ENABLE_BENCHMARK_MAIN 0
+#endif
+
+#if ACOREX_ENABLE_BENCHMARK_MAIN
 // Standalone benchmark runner
 // Compile with: g++ -std=c++17 -O3 -march=native RunBenchmarks.cpp Explorer/SIMDUtils.cpp Explorer/BenchmarkSIMD.cpp -o run_benchmarks
 
@@ -34,3 +39,4 @@ int main(int argc, char* argv[]) {
     
     return 0;
 }
+#endif // ACOREX_ENABLE_BENCHMARK_MAIN

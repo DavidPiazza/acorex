@@ -76,6 +76,13 @@ public:
         
         double& operator[](size_t i) { return weights[i]; }
         const double& operator[](size_t i) const { return weights[i]; }
+        
+        // Convenience methods for std::vector-like usage
+        void push_back(double w) { weights.push_back(w); }
+        auto begin() { return weights.begin(); }
+        auto end() { return weights.end(); }
+        auto begin() const { return weights.begin(); }
+        auto end() const { return weights.end(); }
     };
     
     /**

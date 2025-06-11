@@ -187,13 +187,30 @@ private:
     
     /**
      * Compute weighted circular mean of phases
-     * Handles phase wrapping correctly
+     * Uses von Mises distribution and circular statistics
+     * Handles phase wrapping and discontinuities correctly
      */
     void computeWeightedCircularMean(
         const std::vector<Eigen::ArrayXd>& phases,
         const std::vector<Eigen::ArrayXd>& magnitudes,
         const BarycentricWeights& weights,
         Eigen::ArrayXd& result);
+    
+    /**
+     * Apply phase smoothing to reduce discontinuities
+     * Uses local phase coherence to adaptively smooth phase values
+     */
+    void applyPhaseSmoothing(Eigen::ArrayXd& phases);
+    
+    /**
+     * Compute phase coherence measure between sources
+     * Returns value between 0 (incoherent) and 1 (coherent)
+     */
+    double computePhaseCoherence(
+        const std::vector<Eigen::ArrayXd>& phases,
+        const std::vector<Eigen::ArrayXd>& magnitudes,
+        const BarycentricWeights& weights,
+        fluid::index bin);
     
     /**
      * Extended transport matrix computation for N sources

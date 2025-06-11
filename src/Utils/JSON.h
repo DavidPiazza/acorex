@@ -22,6 +22,10 @@ public:
 
 	bool Read ( const std::string& inputFile, DataSet& dataset );
 	bool Read ( const std::string& inputFile, AnalysisSettings& settings );
+	
+	// Hybrid I/O methods using memory-mapped files for transport data
+	bool WriteHybrid ( const std::string& outputFile, const DataSet& dataset );
+	bool ReadHybrid ( const std::string& inputFile, DataSet& dataset );
 };
 
 void to_json ( nlohmann::json& j, const DataSet& a );

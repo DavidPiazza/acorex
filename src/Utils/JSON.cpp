@@ -1,6 +1,8 @@
 #include "./JSON.h"
+#include "MemoryMappedIO.h"
 #include <ofLog.h>
 #include <fstream>
+#include <filesystem>
 
 using namespace Acorex;
 
@@ -202,4 +204,83 @@ void Utils::to_json ( nlohmann::json& j, const TransportData& a )
 void Utils::from_json ( const nlohmann::json& j, TransportData& a )
 {
 	TO_A ( frames );
+}
+
+bool Utils::JSON::WriteHybrid ( const std::string& outputFile, const DataSet& dataset )
+{
+	try
+	{
+		// Create a copy of dataset without transport data for JSON
+		DataSet datasetCopy = dataset;
+		datasetCopy.transport.clear();
+		
+		// Write main data to JSON
+		nlohmann::json j = datasetCopy;
+		std::ofstream file ( outputFile );
+		file << j.dump ( 4 );
+		file.close();
+		
+		// Write transport data to binary file if present
+		if (dataset.analysisSettings.bTransport && dataset.transport.fileCount() > 0) {
+			std::filesystem::path jsonPath(outputFile);
+			std::filesystem::path binaryPath = jsonPath;
+			binaryPath.replace_extension(".transport");
+			
+			TransportDataIO io;
+			if (!io.write(binaryPath.string(), dataset.transport)) {
+				// Clean up JSON file on failure
+				std::filesystem::remove(outputFile);
+				ofLogError("JSON::WriteHybrid") << "Failed to write transport data to: " << binaryPath.string();
+				return false;
+			}
+			
+			ofLogNotice("JSON::WriteHybrid") << "Wrote transport data to: " << binaryPath.string();
+		}
+		
+		return true;
+	}
+	catch ( const std::exception& e )
+	{
+		ofLogError ( "JSON::WriteHybrid" ) << "Exception writing file: " << e.what ( );
+		return false;
+	}
+}
+
+bool Utils::JSON::ReadHybrid ( const std::string& inputFile, DataSet& dataset )
+{
+	try
+	{
+		// Read main data from JSON
+		std::ifstream i ( inputFile );
+		nlohmann::json j;
+		i >> j;
+		dataset = j;
+		
+		// Read transport data from binary file if expected
+		if (dataset.analysisSettings.bTransport) {
+			std::filesystem::path jsonPath(inputFile);
+			std::filesystem::path binaryPath = jsonPath;
+			binaryPath.replace_extension(".transport");
+			
+			if (std::filesystem::exists(binaryPath)) {
+				TransportDataIO io;
+				if (!io.read(binaryPath.string(), dataset.transport)) {
+					// Continue without transport data, but log warning
+					ofLogWarning("JSON::ReadHybrid") << "Failed to load transport data from: " << binaryPath.string();
+					dataset.transport.clear();
+				} else {
+					ofLogNotice("JSON::ReadHybrid") << "Loaded transport data from: " << binaryPath.string();
+				}
+			} else {
+				ofLogWarning("JSON::ReadHybrid") << "Transport data file not found: " << binaryPath.string();
+			}
+		}
+		
+		return true;
+	}
+	catch ( const std::exception& e )
+	{
+		ofLogError ( "JSON::ReadHybrid" ) << "Exception reading file: " << e.what ( );
+		return false;
+	}
 }

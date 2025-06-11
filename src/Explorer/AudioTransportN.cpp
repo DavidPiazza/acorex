@@ -293,36 +293,21 @@ void AudioTransportN::computeWeightedGeometricMean(
     const BarycentricWeights& weights,
     Eigen::ArrayXd& result) {
     
-    // Work in log domain for numerical stability
-    Eigen::ArrayXd logResult = Eigen::ArrayXd::Zero(result.size());
-    
-    // Handle edge case: check if any weights are 1.0 (single source dominates)
-    for (size_t i = 0; i < magnitudes.size(); ++i) {
-        if (std::abs(weights[i] - 1.0) < 1e-6) {
-            // Single source has all the weight
-            result = magnitudes[i];
-            return;
-        }
+    // Prepare data for SIMD processing
+    std::vector<const double*> magPtrs;
+    magPtrs.reserve(magnitudes.size());
+    for (const auto& mag : magnitudes) {
+        magPtrs.push_back(mag.data());
     }
     
-    // Compute weighted sum in log domain
-    for (size_t i = 0; i < magnitudes.size(); ++i) {
-        if (weights[i] > 1e-10) {  // Skip negligible weights
-            // Add small epsilon to avoid log(0), scale epsilon by weight to maintain proportions
-            const double epsilon = 1e-10 * weights[i];
-            logResult += weights[i] * (magnitudes[i] + epsilon).log();
-        }
-    }
-    
-    // Convert back from log domain
-    result = logResult.exp();
-    
-    // Handle any NaN or Inf values that might have occurred
-    for (fluid::index i = 0; i < result.size(); ++i) {
-        if (!std::isfinite(result[i])) {
-            result[i] = 0.0;
-        }
-    }
+    // Use SIMD-optimized implementation
+    SIMD::computeWeightedGeometricMeanSIMD(
+        magPtrs.data(),
+        weights.weights.data(),
+        magnitudes.size(),
+        result.size(),
+        result.data()
+    );
 }
 
 void AudioTransportN::processFrameNGeometric(
@@ -425,192 +410,36 @@ void AudioTransportN::computeWeightedCircularMean(
     const BarycentricWeights& weights,
     Eigen::ArrayXd& result) {
     
-    // Implementation of circular statistics for phase interpolation
-    // Based on directional statistics and von Mises-Fisher distribution
+    // Prepare data for SIMD processing
+    std::vector<const double*> phasePtrs;
+    std::vector<const double*> magPtrs;
+    phasePtrs.reserve(phases.size());
+    magPtrs.reserve(magnitudes.size());
     
-    const double epsilon = 1e-10;
-    
-    // For each frequency bin
-    for (fluid::index bin = 0; bin < result.size(); ++bin) {
-        // Collect weighted unit vectors on the unit circle
-        double sumX = 0.0;  // Real component
-        double sumY = 0.0;  // Imaginary component
-        double totalWeight = 0.0;
-        
-        // Also track phase variance for coherence estimation
-        std::vector<double> weightedPhases;
-        std::vector<double> phaseWeights;
-        
-        for (size_t i = 0; i < phases.size(); ++i) {
-            if (weights[i] > epsilon && magnitudes[i](bin) > epsilon) {
-                // Combined weight: barycentric weight * magnitude
-                double w = weights[i] * magnitudes[i](bin);
-                double phase = phases[i](bin);
-                
-                // Accumulate weighted unit vectors
-                sumX += w * std::cos(phase);
-                sumY += w * std::sin(phase);
-                totalWeight += w;
-                
-                // Store for variance calculation
-                weightedPhases.push_back(phase);
-                phaseWeights.push_back(w);
-            }
-        }
-        
-        if (totalWeight > epsilon) {
-            // Compute mean resultant vector
-            double meanX = sumX / totalWeight;
-            double meanY = sumY / totalWeight;
-            
-            // Mean resultant length (measure of concentration)
-            double R = std::sqrt(meanX * meanX + meanY * meanY);
-            
-            // Circular mean phase
-            double meanPhase = std::atan2(meanY, meanX);
-            
-            // Handle phase unwrapping for better continuity
-            // Check if we need to adjust based on previous bin's phase
-            if (bin > 0) {
-                double prevPhase = result(bin - 1);
-                double phaseDiff = meanPhase - prevPhase;
-                
-                // Unwrap phase jumps greater than π
-                while (phaseDiff > M_PI) {
-                    meanPhase -= 2 * M_PI;
-                    phaseDiff = meanPhase - prevPhase;
-                }
-                while (phaseDiff < -M_PI) {
-                    meanPhase += 2 * M_PI;
-                    phaseDiff = meanPhase - prevPhase;
-                }
-            }
-            
-            // Apply concentration-based smoothing
-            // When R is close to 1, phases are coherent - use direct mean
-            // When R is close to 0, phases are incoherent - apply smoothing
-            if (R < 0.5) {
-                // Low coherence - use magnitude-weighted phase interpolation
-                // with von Mises kernel smoothing
-                double smoothedPhase = 0.0;
-                double smoothWeight = 0.0;
-                
-                // von Mises concentration parameter (kappa)
-                // Estimated from mean resultant length
-                double kappa = R < 0.1 ? 0.5 : (2 * R) / (1 - R * R);
-                
-                for (size_t i = 0; i < weightedPhases.size(); ++i) {
-                    // von Mises kernel weight
-                    double phaseDist = meanPhase - weightedPhases[i];
-                    double kernelWeight = std::exp(kappa * std::cos(phaseDist));
-                    
-                    smoothedPhase += kernelWeight * phaseWeights[i] * weightedPhases[i];
-                    smoothWeight += kernelWeight * phaseWeights[i];
-                }
-                
-                if (smoothWeight > epsilon) {
-                    result(bin) = smoothedPhase / smoothWeight;
-                } else {
-                    result(bin) = meanPhase;
-                }
-            } else {
-                // High coherence - use circular mean directly
-                result(bin) = meanPhase;
-            }
-            
-        } else {
-            // No significant magnitude at this bin - use neutral phase
-            result(bin) = 0.0;
-        }
+    for (const auto& phase : phases) {
+        phasePtrs.push_back(phase.data());
     }
+    for (const auto& mag : magnitudes) {
+        magPtrs.push_back(mag.data());
+    }
+    
+    // Use SIMD-optimized implementation
+    SIMD::computeWeightedCircularMeanSIMD(
+        phasePtrs.data(),
+        magPtrs.data(),
+        weights.weights.data(),
+        phases.size(),
+        result.size(),
+        result.data()
+    );
     
     // Post-process for phase continuity
     applyPhaseSmoothing(result);
 }
 
 void AudioTransportN::applyPhaseSmoothing(Eigen::ArrayXd& phases) {
-    // Apply adaptive phase smoothing to reduce discontinuities
-    // Uses local phase gradient estimation and median filtering
-    
-    if (phases.size() < 3) return;  // Too small to smooth
-    
-    const double maxPhaseJump = M_PI / 2;  // Maximum allowed phase jump
-    const int smoothingWindow = 5;  // Window size for median filter
-    
-    // First pass: detect and mark discontinuities
-    std::vector<bool> discontinuities(phases.size(), false);
-    Eigen::ArrayXd phaseGradient(phases.size() - 1);
-    
-    // Compute phase gradient (handling wrap-around)
-    for (fluid::index i = 0; i < phases.size() - 1; ++i) {
-        double diff = phases(i + 1) - phases(i);
-        
-        // Unwrap the difference
-        while (diff > M_PI) diff -= 2 * M_PI;
-        while (diff < -M_PI) diff += 2 * M_PI;
-        
-        phaseGradient(i) = diff;
-        
-        // Mark discontinuity if gradient is too large
-        if (std::abs(diff) > maxPhaseJump) {
-            discontinuities[i] = true;
-            discontinuities[i + 1] = true;
-        }
-    }
-    
-    // Second pass: apply median filtering near discontinuities
-    Eigen::ArrayXd smoothedPhases = phases;
-    
-    for (fluid::index i = 0; i < phases.size(); ++i) {
-        if (discontinuities[i]) {
-            // Apply local median filter
-            std::vector<double> window;
-            
-            // Collect phase values in window (with circular boundary handling)
-            for (int w = -smoothingWindow/2; w <= smoothingWindow/2; ++w) {
-                fluid::index idx = i + w;
-                
-                // Handle boundaries with reflection
-                if (idx < 0) idx = -idx;
-                if (idx >= phases.size()) idx = 2 * phases.size() - idx - 2;
-                
-                if (idx >= 0 && idx < phases.size()) {
-                    // Unwrap phase relative to center
-                    double phase = phases(idx);
-                    double centerPhase = phases(i);
-                    double diff = phase - centerPhase;
-                    
-                    while (diff > M_PI) diff -= 2 * M_PI;
-                    while (diff < -M_PI) diff += 2 * M_PI;
-                    
-                    window.push_back(centerPhase + diff);
-                }
-            }
-            
-            // Compute median
-            if (!window.empty()) {
-                std::sort(window.begin(), window.end());
-                smoothedPhases(i) = window[window.size() / 2];
-            }
-        }
-    }
-    
-    // Third pass: ensure phase continuity
-    for (fluid::index i = 1; i < smoothedPhases.size(); ++i) {
-        double diff = smoothedPhases(i) - smoothedPhases(i - 1);
-        
-        // Unwrap to maintain continuity
-        while (diff > M_PI) {
-            smoothedPhases(i) -= 2 * M_PI;
-            diff = smoothedPhases(i) - smoothedPhases(i - 1);
-        }
-        while (diff < -M_PI) {
-            smoothedPhases(i) += 2 * M_PI;
-            diff = smoothedPhases(i) - smoothedPhases(i - 1);
-        }
-    }
-    
-    phases = smoothedPhases;
+    // Use SIMD-optimized phase smoothing
+    SIMD::applyPhaseSmoothingSIMD(phases.data(), phases.size());
 }
 
 double AudioTransportN::computePhaseCoherence(

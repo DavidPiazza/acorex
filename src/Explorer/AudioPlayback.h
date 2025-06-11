@@ -28,6 +28,7 @@ WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN 
 #include <memory>
 #include <algorithms/public/AudioTransport.hpp>
 #include "AudioTransportN.hpp"
+#include "AudioMorphEngine.h"
 #include <data/TensorTypes.hpp>
 #include <data/FluidMemory.hpp>
 
@@ -36,6 +37,12 @@ namespace Explorer {
 
 class AudioPlayback {
 public:
+	// Playback mode enumeration
+	enum class PlaybackMode {
+		DISCRETE,    // Traditional jump-based playback with crossfades
+		CONTINUOUS   // Continuous morphing through AudioMorphEngine
+	};
+
 	AudioPlayback ( ) { }
 	~AudioPlayback ( ) { }
 
@@ -77,6 +84,25 @@ public:
 	bool SetMorphTargetsFromKNN ( const glm::vec3& position, int k = 3 );
 
 	int GetSampleRate() const { return mSampleRate.load(); }
+	
+	// Playback mode controls
+	void SetPlaybackMode ( PlaybackMode mode );
+	PlaybackMode GetPlaybackMode ( ) const { return mPlaybackMode.load(); }
+	bool IsDiscreteMode ( ) const { return mPlaybackMode.load() == PlaybackMode::DISCRETE; }
+	bool IsContinuousMode ( ) const { return mPlaybackMode.load() == PlaybackMode::CONTINUOUS; }
+	
+	// AudioMorphEngine integration
+	std::shared_ptr<AudioMorphEngine> GetAudioMorphEngine ( ) { return mAudioMorphEngine; }
+	void SetKDTreeForMorphEngine ( const std::shared_ptr<fluid::algorithm::KDTree>& kdTree );
+	
+	// Sub-frame accurate playhead tracking
+	double GetPlayheadPosition ( size_t playheadID ) const;
+	std::vector<std::pair<size_t, double>> GetAllPlayheadPositions ( ) const;
+	
+	// Mode transition controls
+	void SetModeTransitionDuration ( float seconds ) { mModeTransitionDuration = seconds; }
+	float GetModeTransitionDuration ( ) const { return mModeTransitionDuration.load(); }
+	bool IsModeTransitioning ( ) const { return mModeTransitioning.load(); }
 
 private:
 
@@ -92,6 +118,10 @@ private:
 	                        Utils::AudioPlayhead* playhead, size_t crossfadeLength );
 	void ProcessNWayMorphFrame ( ofSoundBuffer* outBuffer, size_t* outBufferPosition,
 	                            Utils::AudioPlayhead* playhead, size_t crossfadeLength );
+	
+	// Mode transition processing
+	void ProcessModeTransition ( ofSoundBuffer& outBuffer );
+	void ProcessDiscreteMode ( ofSoundBuffer& outBuffer );
 
 	std::vector<Utils::AudioPlayhead> mPlayheads;
 
@@ -157,6 +187,21 @@ private:
 	// sample-rate so that internal calculations remain correct.
 	std::atomic<int> mSampleRate{44100};
 	std::atomic<size_t> mBufferSize{512};
+	
+	// ---------------- Playback mode management ----------------
+	std::atomic<PlaybackMode> mPlaybackMode{PlaybackMode::DISCRETE};
+	std::shared_ptr<AudioMorphEngine> mAudioMorphEngine;
+	
+	// Configuration flags for mode behavior
+	bool mDefaultToContinuousMode = false;
+	
+	// Mode transition state
+	std::atomic<bool> mModeTransitioning{false};
+	std::atomic<float> mModeTransitionProgress{0.0f};
+	std::atomic<float> mModeTransitionDuration{0.5f}; // seconds
+	PlaybackMode mTransitionTargetMode{PlaybackMode::DISCRETE};
+	ofSoundBuffer mTransitionBuffer;
+	std::mutex mTransitionMutex;
 };
 
 } // namespace Explorer

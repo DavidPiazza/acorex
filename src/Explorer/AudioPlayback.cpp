@@ -25,11 +25,16 @@ void Explorer::AudioPlayback::Initialise ( )
 		mAudioTransportN = std::make_unique<AudioTransportN>(4096, mAllocator);
 		mAudioTransportN->initN(mMorphSTFTSize, mMorphSTFTSize, mMorphSTFTSize / 2);
 		
+		// Initialize AudioMorphEngine for continuous mode
+		mAudioMorphEngine = std::make_shared<AudioMorphEngine>();
+		mAudioMorphEngine->Initialise(mSampleRate, mBufferSize, 0.75f);
+		
 		ofLogNotice ( "AudioPlayback" ) << "Morphing systems initialized successfully";
 	} catch ( const std::exception& e ) {
 		ofLogError ( "AudioPlayback" ) << "Failed to initialize AudioTransport: " << e.what();
 		mAudioTransport.reset();
 		mAudioTransportN.reset();
+		mAudioMorphEngine.reset();
 		mMorphMode = false;
 		mNWayMorphMode = false;
 	}
@@ -77,6 +82,12 @@ void Explorer::AudioPlayback::RestartAudio ( size_t sampleRate, size_t bufferSiz
 		SetFlagReset();
 		WaitForResetConfirm();
 	}
+	
+	// Reinitialize AudioMorphEngine with new parameters
+	if ( mAudioMorphEngine )
+	{
+		mAudioMorphEngine->Initialise(mSampleRate, mBufferSize, 0.75f);
+	}
 
 	bStreamStarted = true; // Processor is considered ready once parameters are set
 }
@@ -91,18 +102,33 @@ void Explorer::AudioPlayback::audioOut ( ofSoundBuffer& outBuffer )
 			outBuffer.getSample ( i, 1 ) = 0.0f;
 		}
 		
-	
-	// Safety check for required data structures
-	if ( !mRawView || !mRawView->GetAudioData ( ) || !mRawView->GetDataset ( ) )
-	{
-		// Fill buffer with silence if data not available
-		for ( size_t i = 0; i < outBuffer.getNumFrames ( ); i++ )
+		// Handle mode transitions
+		if ( mModeTransitioning.load() )
 		{
-			outBuffer.getSample ( i, 0 ) = 0.0f;
-			outBuffer.getSample ( i, 1 ) = 0.0f;
+			// Process transition with crossfade
+			ProcessModeTransition(outBuffer);
+			return;
 		}
-		return;
-	}
+		
+		// In continuous mode, delegate to AudioMorphEngine
+		if ( IsContinuousMode() && mAudioMorphEngine )
+		{
+			mAudioMorphEngine->Process(outBuffer);
+			return;
+		}
+		
+		// For discrete mode, continue with existing implementation
+		// Safety check for required data structures
+		if ( !mRawView || !mRawView->GetAudioData ( ) || !mRawView->GetDataset ( ) )
+		{
+			// Fill buffer with silence if data not available
+			for ( size_t i = 0; i < outBuffer.getNumFrames ( ); i++ )
+			{
+				outBuffer.getSample ( i, 0 ) = 0.0f;
+				outBuffer.getSample ( i, 1 ) = 0.0f;
+			}
+			return;
+		}
 	
 	// Update morphing parameters if needed
 	if ( mMorphParametersChanged )
@@ -277,6 +303,13 @@ void Explorer::AudioPlayback::audioOut ( ofSoundBuffer& outBuffer )
 
 			// after this point it is assumed that a new trigger has been reached, perform jump checks for this trigger
 			
+			// Skip jump logic in continuous mode
+			if ( IsContinuousMode() )
+			{
+				continue;
+			}
+			
+			// Discrete mode: Perform jump checks
 			int requiredSamples = mCrossfadeSampleLength;
 			if ( mMorphMode )
 			{
@@ -515,6 +548,9 @@ void Explorer::AudioPlayback::FillAudioSegment ( ofSoundBuffer* outBuffer, size_
 
 	playhead->sampleIndex += segmentLength;
 	*outBufferPosition += segmentLength;
+	
+	// Update sub-frame position atomically
+	playhead->subFramePosition.store(static_cast<double>(playhead->sampleIndex));
 }
 
 void Explorer::AudioPlayback::CrossfadeAudioSegment ( ofSoundBuffer* outBuffer, size_t* outBufferPosition, size_t startSample_A, size_t endSample_A, size_t fileIndex_A, Utils::AudioPlayhead* playhead_B, size_t lengthSetting, bool outBufferFull )
@@ -570,6 +606,9 @@ void Explorer::AudioPlayback::CrossfadeAudioSegment ( ofSoundBuffer* outBuffer, 
 
 	playhead_B->sampleIndex += crossfadeLength;
 	*outBufferPosition += crossfadeLength;
+	
+	// Update sub-frame position atomically
+	playhead_B->subFramePosition.store(static_cast<double>(playhead_B->sampleIndex));
 }
 
 bool Explorer::AudioPlayback::CreatePlayhead ( size_t fileIndex, size_t sampleIndex )
@@ -645,6 +684,23 @@ void Explorer::AudioPlayback::CalculateTriggerPoints ( Utils::AudioPlayhead& pla
 		playhead.triggerSamplePoints.pop ( );
 	}
 
+	// In continuous mode, we don't need trigger points for jumping
+	if ( IsContinuousMode() )
+	{
+		// Just add a single trigger point at the end of the file
+		if ( mRawView && mRawView->GetAudioData ( ) && 
+		     playhead.fileIndex < mRawView->GetAudioData ( )->raw.size() )
+		{
+			playhead.triggerSamplePoints.push ( mRawView->GetAudioData ( )->raw[playhead.fileIndex].size ( ) - 1 );
+		}
+		else
+		{
+			playhead.triggerSamplePoints.push ( INT_MAX );
+		}
+		return;
+	}
+
+	// Discrete mode: Calculate trigger points for jump-based playback
 	// Check if mRawView is valid
 	if ( !mRawView || !mRawView->GetDataset ( ) || !mRawView->GetAudioData ( ) )
 	{
@@ -777,6 +833,11 @@ void Explorer::AudioPlayback::ProcessMorphFrame ( ofSoundBuffer* outBuffer, size
 	playhead->sampleIndex += crossfadeLength;
 	playhead->jumpSampleIndex += crossfadeLength;
 	*outBufferPosition += crossfadeLength;
+	
+	// Update sub-frame position atomically with interpolation between samples
+	double fractionalPosition = static_cast<double>(playhead->sampleIndex) + 
+	                           (static_cast<double>(playhead->crossfadeCurrentSample) / static_cast<double>(playhead->crossfadeSampleLength));
+	playhead->subFramePosition.store(fractionalPosition);
 }
 
 bool Explorer::AudioPlayback::LoadAudioFile ( size_t fileIndex )
@@ -976,6 +1037,8 @@ void Explorer::AudioPlayback::ProcessNWayMorphFrame ( ofSoundBuffer* outBuffer, 
 	// playhead management for N-way morphing
 	if ( playhead ) {
 		playhead->sampleIndex += crossfadeLength;
+		// Update sub-frame position atomically
+		playhead->subFramePosition.store(static_cast<double>(playhead->sampleIndex));
 	}
 }
 
@@ -1039,4 +1102,251 @@ bool Explorer::AudioPlayback::SetMorphTargetsFromKNN ( const glm::vec3& position
 	
 	ofLogWarning ( "AudioPlayback" ) << "SetMorphTargetsFromKNN: Insufficient valid targets";
 	return false;
+}
+
+void Explorer::AudioPlayback::SetPlaybackMode ( PlaybackMode mode )
+{
+	// Check if mode is actually changing
+	if ( mPlaybackMode.load() == mode )
+	{
+		return;
+	}
+	
+	// Check if already transitioning
+	if ( mModeTransitioning.load() )
+	{
+		ofLogWarning ( "AudioPlayback" ) << "Mode transition already in progress";
+		return;
+	}
+	
+	ofLogNotice ( "AudioPlayback" ) << "Initiating smooth transition from " 
+	                                << (mPlaybackMode == PlaybackMode::DISCRETE ? "DISCRETE" : "CONTINUOUS")
+	                                << " to "
+	                                << (mode == PlaybackMode::DISCRETE ? "DISCRETE" : "CONTINUOUS");
+	
+	// Mode-specific initialization before transition
+	if ( mode == PlaybackMode::CONTINUOUS )
+	{
+		// Ensure AudioMorphEngine is initialized
+		if ( !mAudioMorphEngine )
+		{
+			try {
+				mAudioMorphEngine = std::make_shared<AudioMorphEngine>();
+				mAudioMorphEngine->Initialise(mSampleRate, mBufferSize, 0.75f);
+			} catch ( const std::exception& e ) {
+				ofLogError ( "AudioPlayback" ) << "Failed to initialize AudioMorphEngine: " << e.what();
+				return;
+			}
+		}
+		
+		// Reset AudioMorphEngine state for clean transition
+		mAudioMorphEngine->Reset();
+	}
+	
+	// Initiate smooth transition
+	{
+		std::lock_guard<std::mutex> lock ( mTransitionMutex );
+		mTransitionTargetMode = mode;
+		mModeTransitioning = true;
+		mModeTransitionProgress = 0.0f;
+		
+		// Allocate transition buffer
+		mTransitionBuffer.allocate ( mBufferSize, 2 );
+		mTransitionBuffer.setSampleRate ( mSampleRate );
+	}
+}
+
+void Explorer::AudioPlayback::SetKDTreeForMorphEngine ( const std::shared_ptr<fluid::algorithm::KDTree>& kdTree )
+{
+	if ( mAudioMorphEngine )
+	{
+		mAudioMorphEngine->SetKDTree(kdTree);
+		ofLogNotice ( "AudioPlayback" ) << "KD-tree set for AudioMorphEngine";
+	}
+	else
+	{
+		ofLogWarning ( "AudioPlayback" ) << "Cannot set KD-tree: AudioMorphEngine not initialized";
+	}
+}
+
+double Explorer::AudioPlayback::GetPlayheadPosition ( size_t playheadID ) const
+{
+	// Search through active playheads
+	for ( const auto& playhead : mPlayheads )
+	{
+		if ( playhead.playheadID == playheadID )
+		{
+			return playhead.subFramePosition.load();
+		}
+	}
+	
+	// Check queued playheads if not found in active list
+	// Note: This requires careful locking since we're reading from the queue
+	if ( mNewPlayheadMutex.try_lock() )
+	{
+		std::lock_guard<std::mutex> lock ( mNewPlayheadMutex, std::adopt_lock );
+		// We can't iterate through std::queue, so just return -1 if not found
+		// In production code, might want to maintain a separate map for lookup
+	}
+	
+	return -1.0; // Playhead not found
+}
+
+std::vector<std::pair<size_t, double>> Explorer::AudioPlayback::GetAllPlayheadPositions ( ) const
+{
+	std::vector<std::pair<size_t, double>> positions;
+	
+	// Get positions from all active playheads
+	for ( const auto& playhead : mPlayheads )
+	{
+		positions.push_back ( std::make_pair ( playhead.playheadID, playhead.subFramePosition.load() ) );
+	}
+	
+	return positions;
+}
+
+void Explorer::AudioPlayback::ProcessModeTransition ( ofSoundBuffer& outBuffer )
+{
+	std::lock_guard<std::mutex> lock ( mTransitionMutex );
+	
+	// Calculate samples per transition step
+	float transitionSamples = mModeTransitionDuration * mSampleRate;
+	float progressIncrement = outBuffer.getNumFrames() / transitionSamples;
+	
+	// Create temporary buffers for both modes
+	ofSoundBuffer discreteBuffer;
+	discreteBuffer.allocate ( outBuffer.getNumFrames(), 2 );
+	discreteBuffer.setSampleRate ( mSampleRate );
+	
+	ofSoundBuffer continuousBuffer;
+	continuousBuffer.allocate ( outBuffer.getNumFrames(), 2 );
+	continuousBuffer.setSampleRate ( mSampleRate );
+	
+	// Fill with silence first
+	for ( size_t i = 0; i < discreteBuffer.getNumFrames(); i++ )
+	{
+		discreteBuffer.getSample ( i, 0 ) = 0.0f;
+		discreteBuffer.getSample ( i, 1 ) = 0.0f;
+		continuousBuffer.getSample ( i, 0 ) = 0.0f;
+		continuousBuffer.getSample ( i, 1 ) = 0.0f;
+	}
+	
+	// Generate audio from both modes
+	if ( mTransitionTargetMode == PlaybackMode::CONTINUOUS )
+	{
+		// Transitioning TO continuous mode
+		// Generate discrete mode audio (current mode)
+		ProcessDiscreteMode ( discreteBuffer );
+		
+		// Generate continuous mode audio if engine is ready
+		if ( mAudioMorphEngine )
+		{
+			mAudioMorphEngine->Process ( continuousBuffer );
+		}
+	}
+	else
+	{
+		// Transitioning TO discrete mode
+		// Generate continuous mode audio (current mode)
+		if ( mAudioMorphEngine )
+		{
+			mAudioMorphEngine->Process ( continuousBuffer );
+		}
+		
+		// Generate discrete mode audio
+		ProcessDiscreteMode ( discreteBuffer );
+	}
+	
+	// Crossfade between the two buffers
+	for ( size_t i = 0; i < outBuffer.getNumFrames(); i++ )
+	{
+		float progress = mModeTransitionProgress + (i * progressIncrement / outBuffer.getNumFrames());
+		progress = std::min ( 1.0f, progress );
+		
+		float fadeOut = cos ( progress * 0.5f * M_PI );
+		float fadeIn = sin ( progress * 0.5f * M_PI );
+		
+		if ( mTransitionTargetMode == PlaybackMode::CONTINUOUS )
+		{
+			// Fade from discrete to continuous
+			outBuffer.getSample ( i, 0 ) = discreteBuffer.getSample ( i, 0 ) * fadeOut + 
+			                               continuousBuffer.getSample ( i, 0 ) * fadeIn;
+			outBuffer.getSample ( i, 1 ) = discreteBuffer.getSample ( i, 1 ) * fadeOut + 
+			                               continuousBuffer.getSample ( i, 1 ) * fadeIn;
+		}
+		else
+		{
+			// Fade from continuous to discrete
+			outBuffer.getSample ( i, 0 ) = continuousBuffer.getSample ( i, 0 ) * fadeOut + 
+			                               discreteBuffer.getSample ( i, 0 ) * fadeIn;
+			outBuffer.getSample ( i, 1 ) = continuousBuffer.getSample ( i, 1 ) * fadeOut + 
+			                               discreteBuffer.getSample ( i, 1 ) * fadeIn;
+		}
+	}
+	
+	// Update transition progress
+	mModeTransitionProgress = mModeTransitionProgress + progressIncrement;
+	
+	// Check if transition is complete
+	if ( mModeTransitionProgress >= 1.0f )
+	{
+		mPlaybackMode = mTransitionTargetMode;
+		mModeTransitioning = false;
+		mModeTransitionProgress = 0.0f;
+		
+		// Clean up after transition
+		if ( mTransitionTargetMode == PlaybackMode::DISCRETE )
+		{
+			// Clear any active morphing state
+			if ( mNWayMorphMode )
+			{
+				ClearMorphTargets();
+			}
+		}
+		
+		ofLogNotice ( "AudioPlayback" ) << "Mode transition complete. Now in " 
+		                                << (mPlaybackMode == PlaybackMode::DISCRETE ? "DISCRETE" : "CONTINUOUS") 
+		                                << " mode";
+	}
+}
+
+void Explorer::AudioPlayback::ProcessDiscreteMode ( ofSoundBuffer& outBuffer )
+{
+	// This is a simplified version of the discrete mode processing
+	// In a full implementation, this would contain all the logic currently in audioOut
+	// after the continuous mode check
+	
+	// Safety check for required data structures
+	if ( !mRawView || !mRawView->GetAudioData ( ) || !mRawView->GetDataset ( ) )
+	{
+		return; // Already filled with silence
+	}
+	
+	// For now, just process existing playheads without the full complexity
+	// This would need to be expanded to include all the discrete mode logic
+	double crossoverJumpChance = (double)mCrossoverJumpChanceX1000 / 1000.0;
+	
+	for ( size_t playheadIndex = 0; playheadIndex < mPlayheads.size ( ); playheadIndex++ )
+	{
+		if ( mPlayheads[playheadIndex].fileIndex >= mRawView->GetAudioData ( )->raw.size() ||
+		     !mRawView->GetAudioData ( )->loaded[mPlayheads[playheadIndex].fileIndex] )
+		{
+			continue;
+		}
+		
+		auto& audioBuffer = mRawView->GetAudioData ( )->raw[mPlayheads[playheadIndex].fileIndex];
+		size_t remainingSamples = audioBuffer.size() - mPlayheads[playheadIndex].sampleIndex;
+		size_t samplesToProcess = std::min ( remainingSamples, outBuffer.getNumFrames() );
+		
+		// Simple playback without jump logic for transition purposes
+		for ( size_t i = 0; i < samplesToProcess; i++ )
+		{
+			float sample = audioBuffer.getSample ( mPlayheads[playheadIndex].sampleIndex + i, 0 );
+			outBuffer.getSample ( i, 0 ) += sample;
+			outBuffer.getSample ( i, 1 ) += sample;
+		}
+		
+		mPlayheads[playheadIndex].sampleIndex += samplesToProcess;
+		mPlayheads[playheadIndex].subFramePosition.store(static_cast<double>(mPlayheads[playheadIndex].sampleIndex));
+	}
 }

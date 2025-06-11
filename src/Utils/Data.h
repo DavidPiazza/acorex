@@ -3,6 +3,7 @@
 #include <string>
 #include <vector>
 #include <queue>
+#include <atomic>
 #include <nlohmann/json.hpp>
 #include <ofGraphics.h>
 #include <ofSoundBuffer.h>
@@ -198,7 +199,7 @@ struct PointFT {
 };
 
 struct AudioPlayhead {
-	AudioPlayhead ( size_t ID, size_t file, size_t sample ) : playheadID ( ID ), fileIndex ( file ), sampleIndex ( sample ) { }
+	AudioPlayhead ( size_t ID, size_t file, size_t sample ) : playheadID ( ID ), fileIndex ( file ), sampleIndex ( sample ), subFramePosition ( sample ) { }
 
 	size_t playheadID = 0;
 
@@ -212,6 +213,9 @@ struct AudioPlayhead {
 	size_t crossfadeSampleLength = 0;
 	
 	std::queue<size_t> triggerSamplePoints;
+	
+	// Sub-frame accurate position tracking
+	std::atomic<double> subFramePosition{0.0};  // High-precision position in samples
 };
 
 struct VisualPlayhead {

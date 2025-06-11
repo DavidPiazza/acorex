@@ -46,6 +46,7 @@ private:
 	void QuantiseWindowSize ( int& value );
 	void QuantiseHopFraction ( int& value );
 	void AnalysisInsertionToggleChanged ( bool& value );
+	void TimeToggleChanged ( bool& value );
 
 	// Panel Management ----------------------------
 
@@ -89,6 +90,7 @@ private:
 	ofxToggle mAnalysisLoudnessToggle;
 	ofxToggle mAnalysisShapeToggle;
 	ofxToggle mAnalysisMFCCToggle;
+	ofxToggle mAnalysisTransportToggle;
 	ofxIntField mWindowFFTField;
 	ofxIntField mHopFractionField;
 	ofxIntField mNBandsField;

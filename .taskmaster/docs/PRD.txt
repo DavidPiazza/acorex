@@ -1,124 +1,75 @@
-Product Requirements Document: Audio Morphing in ACorEx
+# Continuous Audio-Morphing Explorer – Product Requirements Document (PRD)
+# -----------------------------------------------------------------------
+# Location: acorex/.taskmaster/templates/PRD.txt
+# Version: 0.1
+# Date: 2025-06-11
 
-1. Overview
-This document outlines the requirements for an "Audio Morphing" feature in ACorEx. The goal is to allow users to experience smooth, continuous sonic transitions between audio files selected in the LiveView, rather than abrupt cuts. This will be achieved by integrating the fluid::algorithm::AudioTransport algorithm into the real-time playback engine, activated via a user-selectable "Morph Mode."
+## 1. Background / Motivation
+Acorex currently supports probabilistic jump-based morphing using FluCoMa's `AudioTransport` in a two-file, toggle-driven mode. While effective, the audible result is still discontinuous because audio only changes at discrete jump points. Users want a *truly continuous* navigation experience inside the 3-D Explorer space.
 
-2. Goals
+## 2. Objective
+Transform corpus exploration into a continuous, frame-accurate morphing system by:
+• Pre-computing STFT frames during corpus analysis (UMAP step)  
+• Augmenting each frame with analysis data required by `AudioTransport`  
+• Modifying `AudioTransport` to perform **N-way barycentric blending** (instead of pairwise)  
+• Streaming the morphed audio of the frame(s) directly under the playhead as it moves through 3-D space.
 
-Enhance the auditory exploration experience in ACorEx by providing fluid transitions between sounds.
-Allow users to perceive sonic relationships more intuitively by morphing between audio segments.
-Provide user control over the morphing characteristics (e.g., transition duration, spectral resolution).
-Ensure that the core functionality of ACorEx remains stable and performant.
+## 3. Key Features
+1. **Transport Analysis Flag**  
+   New dataset option `analysisSettings.bTransport` ("Analyze Transport Matrices"). When enabled and `bTime` is true, the analysis pipeline:
+   • Computes STFT frames (window = `morphSTFTSize`) for *all* timepoints.  
+   • Stores magnitude, phase, & derivative (dH) data needed by `AudioTransport`.
 
-3. Target Users
+2. **Batch Pre-computation During UMAP**  
+   While building the low-dimensional embedding (UMAP/PCA/t-SNE), the STFT analyses above are executed so no additional pass is required.
 
-Sound designers exploring corpora for new timbres and textures.
-Musicologists and researchers studying sonic variations and connections.
-Artists and musicians seeking interactive and generative audio experiences.
-Any ACorEx user wishing for a more immersive and less disjointed playback experience.
+3. **Frame Cache & Streaming**  
+   An LRU cache (configurable) stores recent frames.  Cache miss => on-demand STFT compute + store.
 
-4. User Stories
+4. **Morph Engine**  
+   New real-time component that:
+   • Queries KD-tree for the *k* nearest frames to current playhead position.  
+   • Converts distances → barycentric weights.  
+   • Pulls frames from cache.  
+   • Calls the modified `AudioTransport::processFrameN` (new) for N-way blend.  
+   • Overlap-adds output into the sound buffer.
 
-As a user in LiveView, I want to toggle a "Morph Mode" so that when I select different sounds, the audio transitions smoothly between them instead of cutting abruptly.
-As a user, when "Morph Mode" is active, I want to control the duration of the morph/transition to suit my exploratory needs.
-As a user, when "Morph Mode" is active, I want to adjust STFT parameters (e.g., window size) for the morphing engine to balance audio quality with computational performance.
-As a user, when "Morph Mode" is active and I select the first sound (or only one sound is active), I want that sound to play clearly through the morphing engine without requiring a second sound.
-As a user, I want the non-morph mode playback to function as it currently does, without being negatively impacted by this new feature.
+5. **UI / Explorer Updates**  
+   • If `bTransport` + `bTime` are enabled, Explorer shows a free locator (no discrete triggers).  
+   • Provide a toggle/button: "Continuous Morph Mode".
 
-5. Core Features & Requirements
+## 4. Functional Requirements
+FR-1  Corpus analysis SHALL compute and persist STFT frame data when `bTransport` is true.  
+FR-2  `AudioTransport` SHALL support at least 3-way barycentric interpolation (extendable to N).  
+FR-3  Playback engine SHALL continuously output audio reflecting the playhead's XYZ location with ≤ 10 ms latency.  
+FR-4  Cache SHALL prevent audible drop-outs on corpora up to 30 min total audio (≈80 k frames).  
+FR-5  UI SHALL allow enabling/disabling continuous morph mode and display current morph weight breakdown.
 
-5.1. Morph Mode Activation & UI
-* FR1: An ofxToggle labeled "Morph Mode" shall be added to the ExplorerMenu.
-* FR2: When "Morph Mode" is toggled ON, additional UI controls for morphing parameters shall become visible/active.
-* FR3: Morphing parameters shall include:
-* An ofxFloatSlider for "Transition Duration" (e.g., 0.1s to 5.0s, default 0.5s).
-* An ofxIntSlider for "STFT Window Size" (e.g., 512 to 4096, powers of 2, default 1024).
-* FR4: The state of "Morph Mode" and its associated parameters should be managed by LiveView and updated via listeners from ExplorerMenu.
+## 5. Non-Functional Requirements
+NFR-1  Real-time CPU usage < 35 % of a single core on a 2020 MacBook Pro (Intel i7, 44.1 kHz, 512-sample buffer).  
+NFR-2  Peak RAM < 1 GB for corpora ≤ 100 k frames.  
+NFR-3  No additional audible latency beyond existing buffering.  
+NFR-4  Graceful degradation: if cache misses occur, engine outputs silence instead of glitching.
 
-5.2. Real-time Audio Processing Engine
-* FR5: ACorEx's audio output shall be refactored to use ofSoundStream via ofApp::audioOut(). This will be the primary audio output path.
-* FR6: When "Morph Mode" is OFF:
-* The system should replicate the current ofSoundPlayer behavior for playing selected files. This might involve LiveView loading files into a buffer and playing them out through ofApp::audioOut() without AudioTransport processing, or using ofSoundPlayer and mixing its output if feasible with ofSoundStream. The former is preferred for a unified audio path.
-* FR7: When "Morph Mode" is ON:
-* LiveView shall instantiate and manage a fluid::algorithm::AudioTransport object.
-* LiveView shall manage at least two primary audio buffers: mCurrentAudioBuffer (for the sound being morphed from) and mTargetAudioBuffer (for the sound being morphed to).
-* Audio file data for selected sounds will be loaded into these buffers (e.g., as fluid::RealVector).
-* FR8: The AudioTransport algorithm's processFrame() method will be called within LiveView's audio processing logic, which is ultimately invoked by ofApp::audioOut().
-* FR9: The weight parameter for AudioTransport::processFrame() will be dynamically interpolated from 0.0 to 1.0 (or 1.0 to 0.0) over the "Transition Duration" when morphing between two distinct sounds.
-* FR10: Single Sound Passthrough:
-* If "Morph Mode" is ON and only one sound is active (e.g., the first sound selected, or after a transition completes and no new target is immediately selected):
-* The active sound's data should be fed to both input audio streams of AudioTransport::processFrame().
-* The weight parameter should be set to 0.0 (or 1.0, consistently) to ensure the sound passes through without alteration by the interpolation mechanism.
-* Alternatively, if a single sound is active, AudioTransport could be bypassed, and the sound played directly, but processing through AudioTransport ensures consistent latency and processing path.
-* FR11: AudioTransport shall be initialized (init()) with parameters from the UI (STFT Window Size, and derived Hop Size / FFT Size, e.g., Hop = Window/2, FFT = Window). This re-initialization should occur if parameters change.
+## 6. Technical Notes
+• **N-way barycentric blending**: implement `AudioTransport::processFrameN(RealVectorView frames[N], double weights[N], RealMatrixView out)` or similar.  
+• **KD-tree**: reuse `PointPicker` but return *k* IDs + distances each call.  
+• **Cache**: encapsulate in `TransportFrameCache` (thread-safe).  
+• **Data layout**: `DatasetTransport.frames[file][time] -> struct { mag, phase, dH }`.
 
-5.3. Sound Selection and Buffer Management in LiveView (Morph Mode ON)
-* FR12: When a new sound is selected in LiveView (e.g., via mPointPicker):
-* If mCurrentAudioBuffer is empty (first sound): Load selected sound into mCurrentAudioBuffer and also copy its reference/data to mTargetAudioBuffer (for single sound passthrough, weight=0).
-* If mCurrentAudioBuffer is active: The content of mCurrentAudioBuffer becomes the source, and the newly selected sound is loaded into mTargetAudioBuffer. The mCurrentInterpolationWeight is reset to 0.0 to start the morph.
-* FR13: During a morph, LiveView must read appropriate frames from mCurrentAudioBuffer and mTargetAudioBuffer to feed into AudioTransport::processFrame().
-* FR14: When mCurrentInterpolationWeight reaches 1.0:
-* The morph is complete.
-* mTargetAudioBuffer becomes the new mCurrentAudioBuffer.
-* mTargetAudioBuffer might be cleared or set to mirror mCurrentAudioBuffer for subsequent single sound passthrough until a new target is selected.
-* FR15: Playback cursors for mCurrentAudioBuffer and mTargetAudioBuffer must be managed. Looping or fade-out at end-of-file for these buffers should be considered. (Initial: simplest is to let AudioTransport handle mismatched lengths by having less energy to map).
+## 7. Road-map / Task Breakdown (suggested for Taskmaster)
+1. **Add Config Flag** – Add `bTransport` to `Utils::AnalysisSettings` & UI toggle.  
+2. **STFT Frame Struct + Serialization** – Define `TransportFrame` and extend dataset save/load.  
+3. **Batch Analysis Pipeline** – Integrate STFT calc inside existing UMAP pass.  
+4. **LRU Cache Module** – Implement generic thread-safe LRU for frames.  
+5. **Modify AudioTransport** – Introduce N-way barycentric algorithm (`processFrameN`).  
+6. **Morph Engine** – New class in `Explorer/AudioMorphEngine.cpp` handling real-time blending & overlap-add.  
+7. **Refactor AudioPlayback** – Remove jump logic and delegate to MorphEngine.  
+8. **KD-tree k-Nearest Extension** – Update `PointPicker::FindNearestToPosition` to return k neighbours + weights.  
+9. **UI Changes** – Explorer: locator widget + transport toggle + weight HUD.  
+10. **Performance Optimisation** – SIMD where possible; tune cache size; background pre-fetch around cursor.  
+11. **Testing & QA** – Unit tests for N-way interpolation accuracy; integration tests for continuous playback.  
+12. **Docs & Examples** – Update README, write user guide on continuous morphing.
 
-5.4. Performance & Stability
-* NFR1: Latency introduced by the ofSoundStream and AudioTransport processing should be minimized.
-
-6. Technical Implementation Sketch (Modifications from example_prd.txt context):
-
-ofApp.h / ofApp.cpp:
-Add ofSoundStream soundStream; member.
-In setup(): soundStream.setup(this, 0, 2, 44100, bufferSize, numBuffers); (0 input, 2 output channels, standard sample rate, configurable buffer size like 512).
-Implement void audioOut(float* output, int bufferSize, int nChannels);. This function will:
-Call a method on mExplorer.mLiveView (e.g., mLiveView.getAudioBlock(output, bufferSize, nChannels);) to fill the output buffer.
-ExplorerMenu.h / ExplorerMenu.cpp:
-Add ofxToggle mMorphModeToggle;, ofxFloatSlider mTransitionDurationSlider;, ofxIntSlider mSTFTSizeSlider;.
-Setup these controls in Initialise(), add them to a dedicated ofxPanel mMorphPanel.
-Add listeners to propagate changes to LiveView.
-LiveView.h / LiveView.cpp:
-Remove std::vector<ofSoundPlayer> mSoundPlayers; (or adapt its usage for non-morph mode if a hybrid approach is chosen).
-Add bool bMorphMode = false;.
-Add fluid::algorithm::AudioTransport mAudioTransport;.
-Add fluid::RealVector mCurrentAudioBuffer;, fluid::RealVector mTargetAudioBuffer;.
-Add float mTransitionDuration = 0.5f;, int mSTFTSize = 1024;, int mHopSize;, int mFFTsettings;.
-Add float mCurrentInterpolationWeight = 0.0f;.
-Add size_t mCurrentBufferReadPos = 0;, size_t mTargetBufferReadPos = 0;.
-Add std::string mCurrentAudioPath;, std::string mTargetAudioPath;.
-Implement void getAudioBlock(float* outputBuffer, int bufferSize, int nChannels);:
-If !bMorphMode: Handle playback of mCurrentAudioPath (e.g., read from mCurrentAudioBuffer directly if preloaded, no AudioTransport).
-If bMorphMode:
-Fetch bufferSize samples from mCurrentAudioBuffer (from mCurrentBufferReadPos) into fluid::RealVector frameIn1.
-Fetch bufferSize samples from mTargetAudioBuffer (from mTargetBufferReadPos) into fluid::RealVector frameIn2. (Handle cases where one buffer might be shorter or not yet fully loaded).
-Ensure mAudioTransport is initialized.
-mAudioTransport.processFrame(frameIn1, frameIn2, mCurrentInterpolationWeight, outputFrameView, ...);
-Copy outputFrameView to outputBuffer.
-Update mCurrentInterpolationWeight based on mTransitionDuration and bufferSize/sampleRate.
-Advance mCurrentBufferReadPos, mTargetBufferReadPos.
-Handle mCurrentInterpolationWeight reaching 1.0 (swap buffers, reset weight, etc.).
-Modify PlaySound():
-If bMorphMode is OFF, load and play sound using the "classic" method (which now also pipes to ofSoundStream).
-If bMorphMode is ON:
-Update mTargetAudioPath with new file.
-Initiate loading of mTargetAudioPath into mTargetAudioBuffer (potentially threaded to avoid blocking audio).
-If mCurrentAudioPath is valid, it remains. If not (first sound), mCurrentAudioPath also becomes new file, and mCurrentAudioBuffer is loaded.
-Reset mCurrentInterpolationWeight = 0.0f;.
-Helper LoadAudioBuffer(const std::string& path, fluid::RealVector& buffer); using ofxAudioFile or similar.
-7. Risks and Mitigations
-
-High CPU Usage: AudioTransport is complex.
-Mitigation: Sensible default STFT parameters. User control over STFT size. Performance profiling. Clear documentation on performance implications.
-Audio Glitches/Artifacts: Due to buffer under/overflows, incorrect synchronization, or issues in AudioTransport.
-Mitigation: Careful buffer management, robust state transitions in LiveView, thorough testing with diverse audio files. Leveraging AudioTransport's phase handling.
-Complexity of State Management: Managing current/target sounds, interpolation weight, read positions.
-Mitigation: Clear, well-documented state machine in LiveView. Incremental development and testing.
-Latency: ofSoundStream buffer sizes add latency.
-Mitigation: Use smallest feasible ofSoundStream buffer. Optimize AudioTransport call path.
-File Loading Times: Loading new target audio files might block the audio thread.
-Mitigation: Asynchronous file loading into audio buffers. Play silence or continue current morph if target buffer isn't ready.
-
-8. Future Considerations (Out of Scope for Initial Release)
-Visual feedback for morphing in LiveView (e.g., lines between points, color changes).
-Ability to "freeze" a morph partway through.
-Cross-fading instead of full AudioTransport for very short transition durations as a performance option.
+---
+End of PRD 

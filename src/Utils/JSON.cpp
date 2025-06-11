@@ -86,12 +86,18 @@ void Utils::to_json ( nlohmann::json& j, const DataSet& a )
 		TO_J_SETTINGS ( bLoudness ),
 		TO_J_SETTINGS ( bShape ),
 		TO_J_SETTINGS ( bMFCC ),
+		TO_J_SETTINGS ( bTransport ),
 		TO_J_SETTINGS ( windowFFTSize ),
 		TO_J_SETTINGS ( hopFraction ),
 		TO_J_SETTINGS ( nBands ),
 		TO_J_SETTINGS ( nCoefs ),
 		TO_J_SETTINGS ( minFreq ),
 		TO_J_SETTINGS ( maxFreq ) };
+	
+	// Only include transport data if bTransport is true
+	if (a.analysisSettings.bTransport) {
+		j["transport"] = a.transport;
+	}
 }
 
 void Utils::from_json ( const nlohmann::json& j, DataSet& a )
@@ -109,12 +115,23 @@ void Utils::from_json ( const nlohmann::json& j, DataSet& a )
 	TO_A_SETTINGS ( bLoudness );
 	TO_A_SETTINGS ( bShape );
 	TO_A_SETTINGS ( bMFCC );
+	// Handle optional bTransport field for backward compatibility
+	if (j.contains("bTransport")) {
+		TO_A_SETTINGS ( bTransport );
+	} else {
+		a.analysisSettings.bTransport = false; // Default value for old files
+	}
 	TO_A_SETTINGS ( windowFFTSize );
 	TO_A_SETTINGS ( hopFraction );
 	TO_A_SETTINGS ( nBands );
 	TO_A_SETTINGS ( nCoefs );
 	TO_A_SETTINGS ( minFreq );
 	TO_A_SETTINGS ( maxFreq );
+	
+	// Load transport data if present and bTransport is true
+	if (a.analysisSettings.bTransport && j.contains("transport")) {
+		j.at("transport").get_to(a.transport);
+	}
 }
 
 void Utils::to_json ( nlohmann::json& j, const AnalysisSettings& a )
@@ -127,6 +144,7 @@ void Utils::to_json ( nlohmann::json& j, const AnalysisSettings& a )
 		TO_J ( bLoudness ),
 		TO_J ( bShape ),
 		TO_J ( bMFCC ),
+		TO_J ( bTransport ),
 		TO_J ( windowFFTSize ),
 		TO_J ( hopFraction ),
 		TO_J ( nBands ),
@@ -144,10 +162,44 @@ void Utils::from_json ( const nlohmann::json& j, AnalysisSettings& a )
 	TO_A ( bLoudness );
 	TO_A ( bShape );
 	TO_A ( bMFCC );
+	// Handle optional bTransport field for backward compatibility
+	if (j.contains("bTransport")) {
+		TO_A ( bTransport );
+	} else {
+		a.bTransport = false; // Default value for old files
+	}
 	TO_A ( windowFFTSize );
 	TO_A ( hopFraction );
 	TO_A ( nBands );
 	TO_A ( nCoefs );
 	TO_A ( minFreq );
 	TO_A ( maxFreq );
+}
+
+void Utils::to_json ( nlohmann::json& j, const TransportFrame& a )
+{
+	j = nlohmann::json {
+		TO_J ( magnitude ),
+		TO_J ( phase ),
+		TO_J ( dH )
+	};
+}
+
+void Utils::from_json ( const nlohmann::json& j, TransportFrame& a )
+{
+	TO_A ( magnitude );
+	TO_A ( phase );
+	TO_A ( dH );
+}
+
+void Utils::to_json ( nlohmann::json& j, const TransportData& a )
+{
+	j = nlohmann::json {
+		TO_J ( frames )
+	};
+}
+
+void Utils::from_json ( const nlohmann::json& j, TransportData& a )
+{
+	TO_A ( frames );
 }

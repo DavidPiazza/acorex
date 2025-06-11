@@ -30,5 +30,11 @@ void from_json ( const nlohmann::json& j, DataSet& a );
 void to_json ( nlohmann::json& j, const AnalysisSettings& a );
 void from_json ( const nlohmann::json& j, AnalysisSettings& a );
 
+void to_json ( nlohmann::json& j, const TransportFrame& a );
+void from_json ( const nlohmann::json& j, TransportFrame& a );
+
+void to_json ( nlohmann::json& j, const TransportData& a );
+void from_json ( const nlohmann::json& j, TransportData& a );
+
 } // namespace Utils
 } // namespace Acorex

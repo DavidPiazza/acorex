@@ -1,0 +1,109 @@
+{
+  "meta": {
+    "generatedAt": "2025-06-11T01:32:40.063Z",
+    "tasksAnalyzed": 12,
+    "totalTasks": 12,
+    "analysisCount": 12,
+    "thresholdScore": 5,
+    "projectName": "Taskmaster",
+    "usedResearch": false
+  },
+  "complexityAnalysis": [
+    {
+      "taskId": 1,
+      "taskTitle": "Add Transport Analysis Configuration Flag",
+      "complexityScore": 3,
+      "recommendedSubtasks": 5,
+      "expansionPrompt": "Break down the implementation of the bTransport flag into: struct modification, serialization updates, UI control creation, conditional enabling logic, and pipeline integration. Focus on following existing patterns and maintaining backward compatibility.",
+      "reasoning": "Low-medium complexity task involving straightforward boolean flag implementation following established patterns. Well-defined scope with clear dependencies and existing code patterns to follow."
+    },
+    {
+      "taskId": 2,
+      "taskTitle": "Define TransportFrame Data Structure and Serialization",
+      "complexityScore": 6,
+      "recommendedSubtasks": 5,
+      "expansionPrompt": "Decompose into: core struct definition with RealVector members, binary serialization implementation, container structure design, memory-mapped I/O implementation, and HDF5 integration. Consider performance and cross-platform compatibility requirements.",
+      "reasoning": "Medium-high complexity due to performance-critical serialization, memory management concerns, and cross-platform compatibility requirements. Multiple technical approaches (binary, HDF5) add complexity."
+    },
+    {
+      "taskId": 3,
+      "taskTitle": "Integrate STFT Analysis into Batch Pipeline",
+      "complexityScore": 7,
+      "recommendedSubtasks": 5,
+      "expansionPrompt": "Break into: pipeline configuration extension, STFT analysis module implementation, data structure integration, multi-threading implementation, and pipeline orchestration. Focus on performance optimization and integration with existing UMAP workflow.",
+      "reasoning": "High complexity due to integration with existing pipeline, multi-threading requirements, performance constraints, and coordination with multiple subsystems. Requires deep understanding of existing architecture."
+    },
+    {
+      "taskId": 4,
+      "taskTitle": "Implement Thread-Safe LRU Frame Cache",
+      "complexityScore": 8,
+      "recommendedSubtasks": 5,
+      "expansionPrompt": "Decompose into: core LRU algorithm implementation, thread-safety with shared_mutex, TransportFrame-specific interface, cache miss handling with STFT computation, and performance monitoring with memory optimization. Address concurrency and performance critical requirements.",
+      "reasoning": "High complexity due to thread-safety requirements, performance-critical nature, memory management complexity, and need for sophisticated cache miss handling with on-demand computation."
+    },
+    {
+      "taskId": 5,
+      "taskTitle": "Extend AudioTransport for N-way Barycentric Blending",
+      "complexityScore": 9,
+      "recommendedSubtasks": 5,
+      "expansionPrompt": "Break down into: barycentric coordinate system design, optimal transport algorithm extension, magnitude interpolation implementation, phase interpolation with circular statistics, and SIMD optimization with backward compatibility. Focus on mathematical correctness and performance.",
+      "reasoning": "Very high complexity involving advanced mathematical algorithms, optimal transport theory, circular statistics, SIMD optimization, and maintaining backward compatibility. Requires deep mathematical and performance optimization expertise."
+    },
+    {
+      "taskId": 6,
+      "taskTitle": "Develop Real-time Audio Morph Engine",
+      "complexityScore": 8,
+      "recommendedSubtasks": 5,
+      "expansionPrompt": "Decompose into: class structure and initialization, KD-tree query system, barycentric weight calculation, frame cache management, and overlap-add synthesis with timing synchronization. Focus on real-time performance constraints and latency requirements.",
+      "reasoning": "High complexity due to real-time performance requirements, complex audio processing with overlap-add synthesis, integration of multiple subsystems, and strict latency constraints (<10ms target)."
+    },
+    {
+      "taskId": 7,
+      "taskTitle": "Refactor AudioPlayback System",
+      "complexityScore": 5,
+      "recommendedSubtasks": 5,
+      "expansionPrompt": "Break into: mode switching infrastructure, AudioMorphEngine integration, jump-based logic removal, sub-frame playhead tracking, and smooth mode transitions. Maintain API compatibility while adding new functionality.",
+      "reasoning": "Medium complexity involving significant refactoring of existing system while maintaining backward compatibility. Thread-safety and smooth transitions add complexity but scope is well-defined."
+    },
+    {
+      "taskId": 8,
+      "taskTitle": "Extend KD-tree for k-Nearest Neighbor Queries",
+      "complexityScore": 6,
+      "recommendedSubtasks": 5,
+      "expansionPrompt": "Decompose into: interface modification for k-NN support, priority queue-based search algorithm, distance calculation and normalization, spatial indexing optimization, and barycentric weight integration. Focus on algorithm efficiency and accuracy.",
+      "reasoning": "Medium-high complexity due to algorithmic modifications to spatial data structures, performance optimization requirements for large datasets, and integration with existing systems."
+    },
+    {
+      "taskId": 9,
+      "taskTitle": "Update Explorer UI for Continuous Morphing",
+      "complexityScore": 6,
+      "recommendedSubtasks": 5,
+      "expansionPrompt": "Break into: mode toggle and UI controls, cursor system replacement, real-time weight visualization, morph weight HUD implementation, and performance monitoring integration. Focus on user experience and real-time visual feedback.",
+      "reasoning": "Medium-high complexity due to UI/UX design requirements, real-time visualization needs, OpenGL integration, and coordination with multiple backend systems for performance monitoring."
+    },
+    {
+      "taskId": 10,
+      "taskTitle": "Implement Performance Optimizations",
+      "complexityScore": 7,
+      "recommendedSubtasks": 5,
+      "expansionPrompt": "Decompose into: SIMD vector operations optimization, dynamic cache tuning system, predictive prefetching engine, CPU thread management and affinity, and performance profiling with GPU acceleration evaluation. Focus on measurable performance improvements.",
+      "reasoning": "High complexity due to low-level optimization requirements, SIMD programming, advanced caching strategies, thread management, and potential GPU acceleration research. Requires deep performance engineering expertise."
+    },
+    {
+      "taskId": 11,
+      "taskTitle": "Comprehensive Testing and Quality Assurance",
+      "complexityScore": 7,
+      "recommendedSubtasks": 5,
+      "expansionPrompt": "Break into: test corpora creation, N-way interpolation unit tests, continuous playback integration tests, automated audio quality metrics, and performance/memory testing pipeline. Establish comprehensive validation framework.",
+      "reasoning": "High complexity due to comprehensive scope covering multiple testing domains, need for specialized audio testing expertise, CI/CD pipeline setup, and establishment of quality metrics and thresholds."
+    },
+    {
+      "taskId": 12,
+      "taskTitle": "Documentation and User Guide Creation",
+      "complexityScore": 4,
+      "recommendedSubtasks": 5,
+      "expansionPrompt": "Break into: README and core documentation updates, comprehensive user guide creation, API documentation for developers, video tutorial production, and troubleshooting guide development. Focus on clarity and completeness for different user types.",
+      "reasoning": "Medium complexity due to comprehensive scope covering multiple documentation types and audiences, but primarily involves content creation rather than technical implementation. Video production adds some complexity."
+    }
+  ]
+}

@@ -32,6 +32,13 @@ int Analyser::GenAnalysis::ProcessFiles ( Utils::DataSet& dataset )
 
     ofLogNotice ( "GenAnalysis" ) << "Total sample count: " << fileLengthSumTotal;
 
+    // Validate that bTransport is only enabled when bTime is also enabled
+    if ( dataset.analysisSettings.bTransport && !dataset.analysisSettings.bTime )
+    {
+        ofLogWarning ( "GenAnalysis" ) << "Transport analysis requires time analysis to be enabled. Disabling transport analysis.";
+        dataset.analysisSettings.bTransport = false;
+    }
+
     if ( dataset.analysisSettings.bTime )
     {
         dataset.time.raw.clear ( );
@@ -49,6 +56,8 @@ int Analyser::GenAnalysis::ProcessFiles ( Utils::DataSet& dataset )
     fluid::index numLoudnessDimensions = dataset.analysisSettings.bLoudness ? 2 : 0;
     fluid::index numShapeDimensions = dataset.analysisSettings.bShape       ? 7 : 0;
     fluid::index numMFCCDimensions = dataset.analysisSettings.bMFCC         ? dataset.analysisSettings.nCoefs : 0;
+    // TODO: Add transport dimensions when bTransport is enabled (Task 2-3)
+    // fluid::index numTransportDimensions = dataset.analysisSettings.bTransport ? X : 0;
 
     fluid::index numDimensions = numTimeDimensions + numPitchDimensions + numLoudnessDimensions + numShapeDimensions + numMFCCDimensions;
 
@@ -154,6 +163,13 @@ int Analyser::GenAnalysis::ProcessFiles ( Utils::DataSet& dataset )
                 dct.processFrame ( mels, mfccs );
                 mfccMat.row ( frameIndex ) <<= mfccs;
             }
+
+            // TODO: Add transport analysis when bTransport is enabled (Task 2-3)
+            // if ( dataset.analysisSettings.bTransport && dataset.analysisSettings.bTime )
+            // {
+            //     // Compute and store STFT frames for transport matrix analysis
+            //     // This will be implemented in subsequent tasks
+            // }
         }
 
         if ( dataset.analysisSettings.bTime )

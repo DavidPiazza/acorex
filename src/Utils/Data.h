@@ -45,6 +45,7 @@ struct AnalysisSettings {
 	bool bLoudness = false;
 	bool bShape = false;
 	bool bMFCC = false;
+	bool bTransport = false;
 	int windowFFTSize = 1024;
 	int hopFraction = 2;
 	int nBands = 40;
@@ -71,6 +72,8 @@ struct DataSet {
 	TimeData time;
 
 	StatsData stats;
+	
+	TransportData transport;
 
 	AnalysisSettings analysisSettings;
 };
@@ -111,6 +114,108 @@ struct VisualPlayhead {
 
 	ofColor color = ofColor ( 255, 255, 255, 255 );
 	ofRectangle panelRect = ofRectangle ( 0, 0, 0, 0 );
+};
+
+struct TransportFrame {
+	std::vector<double> magnitude;
+	std::vector<double> phase;
+	std::vector<double> dH;
+	
+	TransportFrame() = default;
+	
+	TransportFrame(size_t frameSize) 
+		: magnitude(frameSize, 0.0)
+		, phase(frameSize, 0.0)
+		, dH(frameSize, 0.0) {}
+		
+	TransportFrame(const std::vector<double>& mag, 
+	               const std::vector<double>& ph, 
+	               const std::vector<double>& deriv)
+		: magnitude(mag)
+		, phase(ph)
+		, dH(deriv) {}
+		
+	TransportFrame(std::vector<double>&& mag, 
+	               std::vector<double>&& ph, 
+	               std::vector<double>&& deriv)
+		: magnitude(std::move(mag))
+		, phase(std::move(ph))
+		, dH(std::move(deriv)) {}
+	
+	size_t frameSize() const {
+		return magnitude.size();
+	}
+	
+	bool isValid() const {
+		return !magnitude.empty() && 
+		       magnitude.size() == phase.size() && 
+		       magnitude.size() == dH.size();
+	}
+	
+	void clear() {
+		magnitude.clear();
+		phase.clear();
+		dH.clear();
+	}
+	
+	void resize(size_t newSize) {
+		magnitude.resize(newSize, 0.0);
+		phase.resize(newSize, 0.0);
+		dH.resize(newSize, 0.0);
+	}
+};
+
+struct TransportData {
+	std::vector<std::vector<TransportFrame>> frames;
+	
+	TransportData() = default;
+	
+	void clear() {
+		frames.clear();
+	}
+	
+	size_t fileCount() const {
+		return frames.size();
+	}
+	
+	size_t frameCount(size_t fileIndex) const {
+		if (fileIndex < frames.size()) {
+			return frames[fileIndex].size();
+		}
+		return 0;
+	}
+	
+	bool hasFile(size_t fileIndex) const {
+		return fileIndex < frames.size() && !frames[fileIndex].empty();
+	}
+	
+	TransportFrame* getFrame(size_t fileIndex, size_t frameIndex) {
+		if (fileIndex < frames.size() && frameIndex < frames[fileIndex].size()) {
+			return &frames[fileIndex][frameIndex];
+		}
+		return nullptr;
+	}
+	
+	const TransportFrame* getFrame(size_t fileIndex, size_t frameIndex) const {
+		if (fileIndex < frames.size() && frameIndex < frames[fileIndex].size()) {
+			return &frames[fileIndex][frameIndex];
+		}
+		return nullptr;
+	}
+	
+	void addFile() {
+		frames.emplace_back();
+	}
+	
+	void reserveFiles(size_t count) {
+		frames.reserve(count);
+	}
+	
+	void reserveFrames(size_t fileIndex, size_t count) {
+		if (fileIndex < frames.size()) {
+			frames[fileIndex].reserve(count);
+		}
+	}
 };
 
 } // namespace Utils

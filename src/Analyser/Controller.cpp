@@ -294,6 +294,12 @@ void Analyser::Controller::GenerateDimensionNames ( std::vector<std::string>& di
 				dimensionNames.push_back ( "MFCC " + std::to_string ( i + 1 ) );
 			}
 		}
+
+		// TODO: Add transport dimension names when bTransport is enabled (Task 2-3)
+		// if ( settings.bTransport )
+		// {
+		//     dimensionNames.push_back ( "Transport Frame Index" );
+		// }
 	}
 	else
 	{ // Stats
@@ -327,6 +333,12 @@ void Analyser::Controller::GenerateDimensionNames ( std::vector<std::string>& di
 				Push7Stats ( "MFCC " + std::to_string ( i + 1 ), dimensionNames );
 			}
 		}
+
+		// TODO: Add transport statistics dimension names when bTransport is enabled (Task 2-3)
+		// if ( settings.bTransport )
+		// {
+		//     // Transport features would not have statistics in non-time mode
+		// }
 	}
 }
 

@@ -101,6 +101,7 @@ void AnalyserMenu::Initialise ( bool HiDpi )
 		mAnalysisMetadataPanel.add ( mAnalysisLoudnessToggle.setup ( "Analyse Loudness", true ) );
 		mAnalysisMetadataPanel.add ( mAnalysisShapeToggle.setup ( "Analyse Shape", false ) );
 		mAnalysisMetadataPanel.add ( mAnalysisMFCCToggle.setup ( "Analyse MFCC", false ) );
+		mAnalysisMetadataPanel.add ( mAnalysisTransportToggle.setup ( "Analyse Transport", false ) );
 
 		mAnalysisMetadataPanel.add ( mWindowFFTField.setup ( "Window Size: ", 1024, 512, 8192 ) );
 		mAnalysisMetadataPanel.add ( mHopFractionField.setup ( "Hop Size (Fraction of Window):  1 / ", 2, 1, 16 ) );
@@ -114,6 +115,7 @@ void AnalyserMenu::Initialise ( bool HiDpi )
 		mAnalysisLoudnessToggle.setBackgroundColor ( mColors.interfaceBackgroundColor );
 		mAnalysisShapeToggle.setBackgroundColor ( mColors.interfaceBackgroundColor );
 		mAnalysisMFCCToggle.setBackgroundColor ( mColors.interfaceBackgroundColor );
+		mAnalysisTransportToggle.setBackgroundColor ( mColors.interfaceBackgroundColor );
 		mWindowFFTField.setBackgroundColor ( mColors.interfaceBackgroundColor );
 		mHopFractionField.setBackgroundColor ( mColors.interfaceBackgroundColor );
 		mNBandsField.setBackgroundColor ( mColors.interfaceBackgroundColor );
@@ -198,6 +200,14 @@ void AnalyserMenu::Initialise ( bool HiDpi )
 		mConfirmAnalysisButton.addListener ( this, &AnalyserMenu::Analyse );
 		mConfirmReductionButton.addListener ( this, &AnalyserMenu::Reduce );
 		mAnalysisInsertionReplaceWithNewToggle.addListener ( this, &AnalyserMenu::AnalysisInsertionToggleChanged );
+		mTimeDimensionToggle.addListener ( this, &AnalyserMenu::TimeToggleChanged );
+	}
+
+	// Set initial state of transport toggle based on time toggle
+	if ( !mTimeDimensionToggle ) {
+		mAnalysisTransportToggle = false;
+		mAnalysisTransportToggle.setMouseInputEnabled ( false );
+		mAnalysisTransportToggle.setTextColor ( mColors.lockedTextColor );
 	}
 
 	ToggleAnalysisUILockout ( false );
@@ -355,6 +365,7 @@ void AnalyserMenu::RemoveListeners ( )
 	mConfirmAnalysisButton.removeListener ( this, &AnalyserMenu::Analyse );
 	mConfirmReductionButton.removeListener ( this, &AnalyserMenu::Reduce );
 	mAnalysisInsertionReplaceWithNewToggle.removeListener ( this, &AnalyserMenu::AnalysisInsertionToggleChanged );
+	mTimeDimensionToggle.removeListener ( this, &AnalyserMenu::TimeToggleChanged );
 }
 
 // Analyse and Reduce ---------------------------
@@ -585,6 +596,7 @@ void AnalyserMenu::UnpackSettingsFromFile ( const Utils::AnalysisSettings& setti
 	mAnalysisLoudnessToggle = settings.bLoudness;
 	mAnalysisShapeToggle = settings.bShape;
 	mAnalysisMFCCToggle = settings.bMFCC;
+	mAnalysisTransportToggle = settings.bTransport;
 	mWindowFFTField = settings.windowFFTSize;
 	mHopFractionField = settings.hopFraction;
 	mNBandsField = settings.nBands;
@@ -605,6 +617,7 @@ void AnalyserMenu::PackSettingsFromUser ( Utils::AnalysisSettings& settings )
 	settings.bLoudness = mAnalysisLoudnessToggle;
 	settings.bShape = mAnalysisShapeToggle;
 	settings.bMFCC = mAnalysisMFCCToggle;
+	settings.bTransport = mAnalysisTransportToggle;
 	settings.windowFFTSize = mWindowFFTField;
 	settings.hopFraction = mHopFractionField;
 	settings.nBands = mNBandsField;
@@ -675,6 +688,21 @@ void AnalyserMenu::AnalysisInsertionToggleChanged ( bool& value )
 	else { mAnalysisInsertionReplaceWithNewToggle.setName ( "Existing Files" ); }
 }
 
+void AnalyserMenu::TimeToggleChanged ( bool& value )
+{
+	if ( value ) {
+		// Enable transport toggle when time analysis is enabled
+		mAnalysisTransportToggle.setMouseInputEnabled ( true );
+		mAnalysisTransportToggle.setTextColor ( mColors.normalTextColor );
+	}
+	else {
+		// Disable transport toggle when time analysis is disabled
+		mAnalysisTransportToggle = false; // Set to off
+		mAnalysisTransportToggle.setMouseInputEnabled ( false );
+		mAnalysisTransportToggle.setTextColor ( mColors.lockedTextColor );
+	}
+}
+
 // Panel Management ------------------------------
 
 void AnalyserMenu::ToggleAnalysisUILockout ( bool lock )
@@ -684,6 +712,7 @@ void AnalyserMenu::ToggleAnalysisUILockout ( bool lock )
 	mAnalysisLoudnessToggle.setTextColor ( lock ? mColors.lockedTextColor : mColors.normalTextColor );
 	mAnalysisShapeToggle.setTextColor ( lock ? mColors.lockedTextColor : mColors.normalTextColor );
 	mAnalysisMFCCToggle.setTextColor ( lock ? mColors.lockedTextColor : mColors.normalTextColor );
+	mAnalysisTransportToggle.setTextColor ( lock ? mColors.lockedTextColor : mColors.normalTextColor );
 	mWindowFFTField.setTextColor ( lock ? mColors.lockedTextColor : mColors.normalTextColor );
 	mHopFractionField.setTextColor ( lock ? mColors.lockedTextColor : mColors.normalTextColor );
 	mNBandsField.setTextColor ( lock ? mColors.lockedTextColor : mColors.normalTextColor );

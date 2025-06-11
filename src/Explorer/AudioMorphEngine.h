@@ -6,6 +6,8 @@
 #include <algorithms/public/KDTree.hpp>
 #include <data/TensorTypes.hpp>
 #include <memory>
+#include <atomic>
+#include <chrono>
 #include "AudioTransportN.hpp"
 
 namespace Acorex {
@@ -56,28 +58,78 @@ public:
 
     // Reset internal state (clears buffers and counters)
     void Reset();
+    
+    // Performance monitoring
+    double GetCurrentLatencyMs() const { return mCurrentLatencyMs.load(); }
+    size_t GetUnderrunCount() const { return mUnderrunCount.load(); }
+    size_t GetOverrunCount() const { return mOverrunCount.load(); }
+    
+    // Configure FFT parameters
+    void SetFFTParameters(size_t windowSize, size_t fftSize, size_t hopSize);
 
 private:
     int mSampleRate;
     size_t mBufferSize;
     float mOverlap; // 0-1 range (e.g. 0.75 == 75 % overlap)
 
-    // Buffers used for overlap-add synthesis and circular buffering
-    std::vector<float> mOverlapBuffer;   // Scratch buffer for overlapped region
-    std::vector<float> mCircularBuffer;  // Main circular buffer (mono)
-
-    // Timing / indexing -----------------------------
-    size_t mWritePos = 0;   // Next write index in circular buffer
-    size_t mReadPos  = 0;   // Next read index for output (may lead write during overlap)
-    uint64_t mSampleCounter = 0; // Running total samples processed (for diagnostics)
-
+    // FFT and window parameters
+    size_t mWindowSize = 2048;      // STFT window size
+    size_t mHopSize = 512;          // Hop size (25% of window for 75% overlap)
+    size_t mFFTSize = 2048;         // FFT size (typically same as window)
+    
+    // Circular buffer for overlap-add synthesis
+    struct CircularBuffer {
+        std::vector<float> data;
+        std::atomic<size_t> writePos{0};
+        std::atomic<size_t> readPos{0};
+        size_t capacity;
+        
+        CircularBuffer() : capacity(0) {}
+        void resize(size_t newCapacity);
+        size_t availableSamples() const;
+        size_t freeSpace() const;
+        bool write(const float* samples, size_t count);
+        bool read(float* samples, size_t count);
+        void reset();
+    };
+    
+    CircularBuffer mOutputBuffer;      // Main output circular buffer
+    std::vector<float> mOverlapAccumulator;  // Accumulates overlapped windows
+    std::vector<float> mWindowFunction;      // Pre-computed window function
+    
+    // Frame processing state
+    struct FrameState {
+        size_t currentFrame = 0;        // Current frame index
+        size_t samplesUntilNextFrame = 0; // Samples until next frame processing
+        std::chrono::steady_clock::time_point lastProcessTime;
+        double averageLatency = 0.0;    // Running average latency in ms
+        size_t latencyMeasureCount = 0;
+    };
+    FrameState mFrameState;
+    
+    // AudioTransportN instance for spectral morphing
+    std::unique_ptr<AudioTransportN> mTransportN;
+    fluid::Allocator* mAllocator = nullptr;
+    
     // KD-tree instance (shared with other components)
     std::shared_ptr<KDTree> mKDTree;
 
     // Thread-safety for real-time operation (mutable for const query methods)
     mutable std::mutex mProcessMutex;
+    
+    // Performance metrics
+    std::atomic<double> mCurrentLatencyMs{0.0};
+    std::atomic<size_t> mUnderrunCount{0};
+    std::atomic<size_t> mOverrunCount{0};
 
     static void NormalizeWeights(BarycentricWeights& w);
+    
+    // Internal processing methods
+    void ProcessNextFrame();
+    void ApplyWindow(const float* input, float* output, size_t size);
+    void AccumulateOverlapAdd(const float* frame, size_t frameSize);
+    void InitializeWindows();
+    void UpdateLatencyMetrics();
 };
 
 } // namespace Explorer

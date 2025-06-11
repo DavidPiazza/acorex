@@ -38,3 +38,4 @@ tasks/
 
 # Cursor configuration with secrets
 .cursor/mcp.json 
+COMPILATION_FIX_SUMMARY.md

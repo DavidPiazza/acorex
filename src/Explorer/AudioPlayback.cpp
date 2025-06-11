@@ -14,22 +14,25 @@ void Explorer::AudioPlayback::Initialise ( )
 	ofLogNotice ( "AudioPlayback::Initialise" ) << "Called";
 	srand ( time ( NULL ) );
 	
-	// Initialize morphing system - DISABLED due to Eigen assertion error
-	// TODO: Fix fluid::RealMatrix initialization
-	/*
+	// Initialize morphing system
 	try {
+		// Initialize standard AudioTransport
 		mAudioTransport = std::make_unique<fluid::algorithm::AudioTransport>(4096, mAllocator);
-		// Initialize buffer with correct size instead of resizing
 		mMorphOutputBuffer = fluid::RealMatrix(2, 4096);
 		mAudioTransport->init(mMorphSTFTSize, mMorphSTFTSize, mMorphSTFTSize / 2);
+		
+		// Initialize N-way AudioTransport
+		mAudioTransportN = std::make_unique<AudioTransportN>(4096, mAllocator);
+		mAudioTransportN->initN(mMorphSTFTSize, mMorphSTFTSize, mMorphSTFTSize / 2);
+		
+		ofLogNotice ( "AudioPlayback" ) << "Morphing systems initialized successfully";
 	} catch ( const std::exception& e ) {
 		ofLogError ( "AudioPlayback" ) << "Failed to initialize AudioTransport: " << e.what();
 		mAudioTransport.reset();
+		mAudioTransportN.reset();
+		mMorphMode = false;
+		mNWayMorphMode = false;
 	}
-	*/
-	
-	// Disable morph mode by default to avoid crashes
-	mMorphMode = false;
 
 	ofSoundDevice outDevice;
 	std::vector<ofSoundDevice> devices = mSoundStream.getDeviceList ( ofSoundDevice::Api::DEFAULT );
@@ -835,4 +838,143 @@ bool Explorer::AudioPlayback::LoadAudioFile ( size_t fileIndex )
 	ofLogNotice ( "AudioPlayback" ) << "Successfully loaded audio file";
 	
 	return true;
+}
+
+void Explorer::AudioPlayback::SetMorphTargets ( const std::vector<std::pair<size_t, size_t>>& targets,
+                                               const AudioTransportN::BarycentricWeights& weights )
+{
+	if ( targets.size() != weights.size() ) {
+		ofLogError ( "AudioPlayback" ) << "SetMorphTargets: targets and weights size mismatch";
+		return;
+	}
+	
+	if ( targets.size() > AudioTransportN::getMaxSources() ) {
+		ofLogError ( "AudioPlayback" ) << "SetMorphTargets: too many targets, max is " 
+			<< AudioTransportN::getMaxSources();
+		return;
+	}
+	
+	std::lock_guard<std::mutex> lock ( mMorphTargetsMutex );
+	mMorphTargets = targets;
+	mMorphWeights = weights;
+	mMorphWeights.normalize(); // Ensure weights sum to 1.0
+}
+
+void Explorer::AudioPlayback::ClearMorphTargets ( )
+{
+	std::lock_guard<std::mutex> lock ( mMorphTargetsMutex );
+	mMorphTargets.clear();
+	mMorphWeights = AudioTransportN::BarycentricWeights();
+}
+
+void Explorer::AudioPlayback::ProcessNWayMorphFrame ( ofSoundBuffer* outBuffer, size_t* outBufferPosition,
+                                                     Utils::AudioPlayhead* playhead, size_t crossfadeLength )
+{
+	// Ensure we have valid data
+	if ( !mRawView || !mRawView->GetAudioData ( ) || !mAudioTransportN || !mAudioTransportN->initialized() ) {
+		// Fall back to silence
+		for ( size_t i = 0; i < crossfadeLength; i++ ) {
+			outBuffer->getSample ( *outBufferPosition + i, 0 ) = 0.0f;
+		}
+		*outBufferPosition += crossfadeLength;
+		return;
+	}
+	
+	// Get current morph targets
+	std::vector<std::pair<size_t, size_t>> targets;
+	AudioTransportN::BarycentricWeights weights;
+	{
+		std::lock_guard<std::mutex> lock ( mMorphTargetsMutex );
+		targets = mMorphTargets;
+		weights = mMorphWeights;
+	}
+	
+	// Validate we have enough targets
+	if ( targets.size() < 2 ) {
+		// Fall back to standard morphing if we have exactly 2 targets
+		if ( targets.size() == 2 && mAudioTransport && mAudioTransport->initialized() ) {
+			// Use the second target's weight as the interpolation parameter
+			float weight2 = weights[1];
+			
+			// TODO: Implement conversion to standard morph frame processing
+			// For now, fall back to silence
+			for ( size_t i = 0; i < crossfadeLength; i++ ) {
+				outBuffer->getSample ( *outBufferPosition + i, 0 ) = 0.0f;
+			}
+			*outBufferPosition += crossfadeLength;
+			return;
+		}
+		
+		// Otherwise output silence
+		for ( size_t i = 0; i < crossfadeLength; i++ ) {
+			outBuffer->getSample ( *outBufferPosition + i, 0 ) = 0.0f;
+		}
+		*outBufferPosition += crossfadeLength;
+		return;
+	}
+	
+	// Get STFT frame size
+	size_t frameSize = mMorphSTFTSize;
+	
+	// Prepare input frames
+	std::vector<fluid::RealVector> frames;
+	frames.reserve(targets.size());
+	
+	// Get audio data references
+	auto& audioData = mRawView->GetAudioData ( )->raw;
+	
+	// Collect frames from each target
+	for ( const auto& target : targets ) {
+		size_t fileIndex = target.first;
+		size_t sampleIndex = target.second;
+		
+		// Bounds checking
+		if ( fileIndex >= audioData.size() ) {
+			// Add silence frame
+			frames.emplace_back(frameSize);
+			for ( size_t i = 0; i < frameSize; i++ ) {
+				frames.back()[i] = 0.0;
+			}
+			continue;
+		}
+		
+		size_t audioSize = audioData[fileIndex].size();
+		frames.emplace_back(frameSize);
+		
+		// Fill frame from audio data
+		for ( size_t i = 0; i < frameSize; i++ ) {
+			size_t idx = sampleIndex + i;
+			frames.back()[i] = ( idx < audioSize ) ? 
+				static_cast<double>(audioData[fileIndex].getSample ( idx, 0 )) : 0.0;
+		}
+	}
+	
+	// Convert frames to views
+	std::vector<fluid::RealVectorView> frameViews;
+	frameViews.reserve(frames.size());
+	for ( auto& frame : frames ) {
+		frameViews.push_back(frame);
+	}
+	
+	// Process N-way morph
+	mAudioTransportN->processFrameN(frameViews, weights, mMorphOutputBuffer);
+	
+	// Copy morphed output with window normalization
+	auto morphed = mMorphOutputBuffer.row ( 0 );
+	auto window = mMorphOutputBuffer.row ( 1 );
+	
+	for ( size_t i = 0; i < crossfadeLength && i < frameSize; i++ ) {
+		float sample = morphed[i] / ( window[i] > 0 ? window[i] : 1.0 );
+		outBuffer->getSample ( *outBufferPosition + i, 0 ) = sample;
+	}
+	
+	// Update position
+	*outBufferPosition += crossfadeLength;
+	
+	// Update playhead sample indices for all targets
+	// This is a simplified approach - in practice you might want more sophisticated
+	// playhead management for N-way morphing
+	if ( playhead ) {
+		playhead->sampleIndex += crossfadeLength;
+	}
 }

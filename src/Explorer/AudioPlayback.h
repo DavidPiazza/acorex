@@ -27,6 +27,7 @@ WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN 
 #include <atomic>
 #include <memory>
 #include <algorithms/public/AudioTransport.hpp>
+#include "AudioTransportN.hpp"
 #include <data/TensorTypes.hpp>
 #include <data/FluidMemory.hpp>
 
@@ -67,6 +68,12 @@ public:
 	void SetMorphMode ( bool enabled ) { mMorphMode = enabled; }
 	void SetMorphSTFTSize ( int size );
 	void SetMorphTransitionDuration ( float duration ) { mMorphTransitionDuration = duration; }
+	
+	// N-way morphing controls
+	void SetNWayMorphMode ( bool enabled ) { mNWayMorphMode = enabled; }
+	void SetMorphTargets ( const std::vector<std::pair<size_t, size_t>>& targets,
+	                      const AudioTransportN::BarycentricWeights& weights );
+	void ClearMorphTargets ( );
 
 	int GetSampleRate() const { return mSampleRate.load(); }
 
@@ -82,6 +89,8 @@ private:
 	void UpdateMorphParameters ( );
 	void ProcessMorphFrame ( ofSoundBuffer* outBuffer, size_t* outBufferPosition, 
 	                        Utils::AudioPlayhead* playhead, size_t crossfadeLength );
+	void ProcessNWayMorphFrame ( ofSoundBuffer* outBuffer, size_t* outBufferPosition,
+	                            Utils::AudioPlayhead* playhead, size_t crossfadeLength );
 
 	std::vector<Utils::AudioPlayhead> mPlayheads;
 
@@ -123,8 +132,15 @@ private:
 	
 	std::atomic<bool> mMorphMode{false};
 	std::unique_ptr<fluid::algorithm::AudioTransport> mAudioTransport;
+	std::unique_ptr<AudioTransportN> mAudioTransportN;
 	fluid::RealMatrix mMorphOutputBuffer;
 	fluid::Allocator mAllocator;
+	
+	// N-way morphing
+	std::atomic<bool> mNWayMorphMode{false};
+	std::mutex mMorphTargetsMutex;
+	std::vector<std::pair<size_t, size_t>> mMorphTargets; // (fileIndex, sampleIndex) pairs
+	AudioTransportN::BarycentricWeights mMorphWeights;
 	
 	// Morphing parameters
 	std::atomic<int> mMorphSTFTSize{1024};

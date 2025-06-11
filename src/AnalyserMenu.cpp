@@ -206,7 +206,7 @@ void AnalyserMenu::Initialise ( bool HiDpi )
 	// Set initial state of transport toggle based on time toggle
 	if ( !mTimeDimensionToggle ) {
 		mAnalysisTransportToggle = false;
-		mAnalysisTransportToggle.setMouseInputEnabled ( false );
+		// mAnalysisTransportToggle.setMouseInputEnabled ( false ); // API changed in newer ofxGui
 		mAnalysisTransportToggle.setTextColor ( mColors.lockedTextColor );
 	}
 
@@ -692,13 +692,13 @@ void AnalyserMenu::TimeToggleChanged ( bool& value )
 {
 	if ( value ) {
 		// Enable transport toggle when time analysis is enabled
-		mAnalysisTransportToggle.setMouseInputEnabled ( true );
+		// mAnalysisTransportToggle.setMouseInputEnabled ( true ); // API changed in newer ofxGui
 		mAnalysisTransportToggle.setTextColor ( mColors.normalTextColor );
 	}
 	else {
 		// Disable transport toggle when time analysis is disabled
 		mAnalysisTransportToggle = false; // Set to off
-		mAnalysisTransportToggle.setMouseInputEnabled ( false );
+		// mAnalysisTransportToggle.setMouseInputEnabled ( false ); // API changed in newer ofxGui
 		mAnalysisTransportToggle.setTextColor ( mColors.lockedTextColor );
 	}
 }

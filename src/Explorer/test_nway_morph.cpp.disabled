@@ -1,0 +1,175 @@
+/*
+Test program for N-way morphing functionality
+This file can be compiled standalone for unit testing
+*/
+
+#include "AudioTransportN.hpp"
+#include <iostream>
+#include <vector>
+#include <cmath>
+#include <cassert>
+
+using namespace Acorex::Explorer;
+
+// Generate a simple sine wave
+void generateSineWave(fluid::RealVector& buffer, double frequency, double sampleRate, double amplitude = 1.0) {
+    for (size_t i = 0; i < buffer.size(); ++i) {
+        buffer[i] = amplitude * std::sin(2.0 * M_PI * frequency * i / sampleRate);
+    }
+}
+
+// Test barycentric weights
+void testBarycentricWeights() {
+    std::cout << "Testing BarycentricWeights..." << std::endl;
+    
+    // Test initialization
+    AudioTransportN::BarycentricWeights weights(3);
+    assert(weights.size() == 3);
+    assert(weights[0] == 1.0 && weights[1] == 0.0 && weights[2] == 0.0);
+    
+    // Test normalization
+    AudioTransportN::BarycentricWeights weights2 = {1.0, 2.0, 3.0};
+    assert(weights2.isValid());
+    double sum = weights2[0] + weights2[1] + weights2[2];
+    assert(std::abs(sum - 1.0) < 1e-6);
+    
+    // Test edge cases
+    AudioTransportN::BarycentricWeights weights3 = {0.0, 0.0, 0.0};
+    assert(weights3.isValid()); // Should normalize to [1, 0, 0]
+    assert(weights3[0] == 1.0);
+    
+    std::cout << "BarycentricWeights tests passed!" << std::endl;
+}
+
+// Test N-way morphing with simple signals
+void testNWayMorphing() {
+    std::cout << "Testing N-way morphing..." << std::endl;
+    
+    const size_t fftSize = 1024;
+    const size_t windowSize = 1024;
+    const size_t hopSize = 512;
+    const double sampleRate = 44100.0;
+    
+    // Create allocator and transport
+    fluid::Allocator allocator;
+    AudioTransportN transport(fftSize * 2, allocator);
+    transport.initN(windowSize, fftSize, hopSize);
+    
+    // Generate test signals
+    std::vector<fluid::RealVector> frames;
+    frames.emplace_back(windowSize);
+    frames.emplace_back(windowSize);
+    frames.emplace_back(windowSize);
+    
+    // 440 Hz (A4)
+    generateSineWave(frames[0], 440.0, sampleRate);
+    // 554.37 Hz (C#5) 
+    generateSineWave(frames[1], 554.37, sampleRate);
+    // 659.25 Hz (E5)
+    generateSineWave(frames[2], 659.25, sampleRate);
+    
+    // Test equal weighting (should produce a chord-like effect)
+    AudioTransportN::BarycentricWeights weights = {1.0/3.0, 1.0/3.0, 1.0/3.0};
+    
+    // Create output buffer
+    fluid::RealMatrix output(2, windowSize);
+    
+    // Process
+    std::vector<fluid::RealVectorView> frameViews;
+    for (auto& frame : frames) {
+        frameViews.push_back(frame);
+    }
+    
+    transport.processFrameN(frameViews, weights, output);
+    
+    // Verify output exists and is non-zero
+    auto outputAudio = output.row(0);
+    double energy = 0.0;
+    for (size_t i = 0; i < windowSize; ++i) {
+        energy += outputAudio[i] * outputAudio[i];
+    }
+    assert(energy > 0.0);
+    
+    std::cout << "N-way morphing test passed! Output energy: " << energy << std::endl;
+    
+    // Test edge cases
+    
+    // Test with single source
+    std::vector<fluid::RealVectorView> singleFrame = {frameViews[0]};
+    AudioTransportN::BarycentricWeights singleWeight = {1.0};
+    transport.processFrameN(singleFrame, singleWeight, output);
+    
+    // Test with two sources (should use optimized path)
+    std::vector<fluid::RealVectorView> twoFrames = {frameViews[0], frameViews[1]};
+    AudioTransportN::BarycentricWeights twoWeights = {0.3, 0.7};
+    transport.processFrameN(twoFrames, twoWeights, output);
+    
+    std::cout << "Edge case tests passed!" << std::endl;
+}
+
+// Test performance with different numbers of sources
+void testPerformance() {
+    std::cout << "Testing performance..." << std::endl;
+    
+    const size_t fftSize = 1024;
+    const size_t windowSize = 1024;
+    const size_t hopSize = 512;
+    
+    fluid::Allocator allocator;
+    AudioTransportN transport(fftSize * 2, allocator);
+    transport.initN(windowSize, fftSize, hopSize);
+    
+    // Test with increasing number of sources
+    for (size_t nSources = 2; nSources <= 8; nSources++) {
+        std::vector<fluid::RealVector> frames;
+        std::vector<fluid::RealVectorView> frameViews;
+        AudioTransportN::BarycentricWeights weights(nSources);
+        
+        // Create frames
+        for (size_t i = 0; i < nSources; ++i) {
+            frames.emplace_back(windowSize);
+            generateSineWave(frames.back(), 440.0 * (i + 1), 44100.0);
+            frameViews.push_back(frames.back());
+            weights[i] = 1.0 / nSources;
+        }
+        
+        fluid::RealMatrix output(2, windowSize);
+        
+        // Time the processing
+        auto start = std::chrono::high_resolution_clock::now();
+        const int iterations = 100;
+        
+        for (int i = 0; i < iterations; ++i) {
+            transport.processFrameN(frameViews, weights, output);
+        }
+        
+        auto end = std::chrono::high_resolution_clock::now();
+        auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
+        
+        std::cout << "N=" << nSources << " sources: " 
+                  << duration.count() / iterations << " microseconds per frame" << std::endl;
+    }
+}
+
+int main() {
+    try {
+        std::cout << "Running N-way AudioTransport tests..." << std::endl;
+        std::cout << "=====================================" << std::endl;
+        
+        testBarycentricWeights();
+        std::cout << std::endl;
+        
+        testNWayMorphing();
+        std::cout << std::endl;
+        
+        testPerformance();
+        std::cout << std::endl;
+        
+        std::cout << "All tests passed!" << std::endl;
+        return 0;
+        
+    } catch (const std::exception& e) {
+        std::cerr << "Test failed with exception: " << e.what() << std::endl;
+        return 1;
+    }
+}

@@ -1,5 +1,6 @@
 #include "./JSON.h"
 #include "MemoryMappedIO.h"
+#include "HDF5IO.h"
 #include <ofLog.h>
 #include <fstream>
 #include <filesystem>
@@ -283,4 +284,14 @@ bool Utils::JSON::ReadHybrid ( const std::string& inputFile, DataSet& dataset )
 		ofLogError ( "JSON::ReadHybrid" ) << "Exception reading file: " << e.what ( );
 		return false;
 	}
+}
+
+bool Utils::JSON::WriteHDF5 ( const std::string& outputFile, const DataSet& dataset, int compressionLevel )
+{
+	return HDF5DataSetIO::write(outputFile, dataset, compressionLevel);
+}
+
+bool Utils::JSON::ReadHDF5 ( const std::string& inputFile, DataSet& dataset )
+{
+	return HDF5DataSetIO::read(inputFile, dataset);
 }

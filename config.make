@@ -79,6 +79,7 @@ OF_ROOT = ../../..
 # TODO: should this be a default setting?
 # PROJECT_LDFLAGS=-Wl,-rpath=./libs
 PROJECT_LDFLAGS = $(PROJECT_ROOT)/libs/libfoonathan_memory-0.7.3.a -Wl,-force_load,$(PROJECT_ROOT)/libs/libfoonathan_memory-0.7.3.a
+PROJECT_LDFLAGS += $(PROJECT_ROOT)/libs/libhdf5.a $(PROJECT_ROOT)/libs/libhdf5_cpp.a $(PROJECT_ROOT)/libs/libz.a
 
 ################################################################################
 # PROJECT DEFINES

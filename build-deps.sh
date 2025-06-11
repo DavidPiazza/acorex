@@ -164,6 +164,23 @@ echo "OS discovered as $currentOS"
         FORCE_DOWNLOAD_TIP+=1
     fi
 
+    if [ ! -d "hdf5" ]; then
+        echo "downloading HDF5..."
+        if [ "$currentOS" == "mac" ]; then
+            # Download prebuilt HDF5 for macOS
+            curl -L https://github.com/HDFGroup/hdf5/releases/download/hdf5_1.14.4.3/hdf5-1.14.4-3-macos-apple-clang.tar.gz -o hdf5.tar.gz
+            tar -xzf hdf5.tar.gz
+            mv hdf5-1.14.4-3-macos14_clang hdf5
+            rm hdf5.tar.gz
+        else
+            # For other platforms, clone and build from source
+            git -c advice.detachedHead=false clone --depth 1 -b "hdf5_1.14.4.3" https://github.com/HDFGroup/hdf5.git
+        fi
+        echo ""
+    else
+        FORCE_DOWNLOAD_TIP+=1
+    fi
+
     if [ $FORCE_DOWNLOAD_TIP > 0 ]; then
         echo "$FORCE_DOWNLOAD_TIP downloads already exist and were skipped (force this step with -d)"
         echo ""
@@ -224,6 +241,51 @@ echo "OS discovered as $currentOS"
     cd ../..
 #
 
+# Build HDF5 if needed
+    echo "--------------------------------------------------"
+    echo "building HDF5 library"
+    echo ""
+    HDF5_BUILD_NEEDED=false
+
+    if [ $FORCE_COMPILE == true ] && [ -d "compiled-hdf5" ]; then
+        rm -rfv compiled-hdf5
+        HDF5_BUILD_NEEDED=true
+    fi
+
+    if [ ! -d "compiled-hdf5" ]; then
+        HDF5_BUILD_NEEDED=true
+    fi
+
+    if [ $HDF5_BUILD_NEEDED == false ]; then
+        echo "compiled-hdf5 already exists, skipping compilation (force this step with -c)"
+        echo ""
+    fi
+
+    if [ $HDF5_BUILD_NEEDED == true ]; then
+        if [ "$currentOS" == "mac" ]; then
+            # For macOS, we use the prebuilt binaries
+            cp -rv deps-pre-build/hdf5/ compiled-hdf5/
+        else
+            # For other platforms, build from source
+            cp -rv deps-pre-build/hdf5/ compiled-hdf5/
+            cd compiled-hdf5
+            
+            mkdir -v build
+            cd build
+            
+            cmake -DHDF5_BUILD_CPP_LIB=ON -DHDF5_BUILD_TOOLS=OFF -DHDF5_BUILD_EXAMPLES=OFF -DHDF5_BUILD_TESTING=OFF -DBUILD_SHARED_LIBS=OFF -DHDF5_ENABLE_Z_LIB_SUPPORT=ON ..
+            
+            echo ""
+            echo "building HDF5..."
+            echo ""
+            
+            cmake --build . --config Release
+            
+            cd ../..
+        fi
+    fi
+#
+
 # Install dependencies to deps folder
     echo "--------------------------------------------------"
     echo "installing dependencies and libraries"
@@ -247,6 +309,15 @@ echo "OS discovered as $currentOS"
     cp -r   deps-pre-build/hisstools_library/include/                           deps/hisstools_library/
     cp -r   deps-pre-build/spectra/include/Spectra/                             deps/Spectra/
     cp -r   deps-pre-build/json/include/nlohmann/                               deps/nlohmann/
+    
+    # Copy HDF5 headers
+    if [ "$currentOS" == "mac" ]; then
+        cp -r   compiled-hdf5/include/*                                          deps/
+    else
+        cp -r   compiled-hdf5/build/src/H5pubconf.h                             deps/
+        cp -r   compiled-hdf5/src/*.h                                           deps/
+        cp -r   compiled-hdf5/c++/src/*.h                                        deps/
+    fi
 
     echo "copying libs..."
     #copy foonathan_memory compiled lib files
@@ -255,6 +326,13 @@ echo "OS discovered as $currentOS"
         cp  deps-pre-build/compiled-memory/src/Release/*                        libs/
     elif [ "$currentOS" == "mac" ]; then
         cp  deps-pre-build/compiled-memory/src/libfoonathan_memory-*.a             libs/
+    fi
+    
+    #copy HDF5 lib files
+    if [ "$currentOS" == "mac" ]; then
+        cp  compiled-hdf5/lib/*.a                                               libs/
+    else
+        cp  compiled-hdf5/build/bin/*.a                                         libs/
     fi
     
     #copy extra compiled foonathan_memory headers

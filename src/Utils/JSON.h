@@ -26,6 +26,10 @@ public:
 	// Hybrid I/O methods using memory-mapped files for transport data
 	bool WriteHybrid ( const std::string& outputFile, const DataSet& dataset );
 	bool ReadHybrid ( const std::string& inputFile, DataSet& dataset );
+	
+	// HDF5-based I/O methods with compression support
+	bool WriteHDF5 ( const std::string& outputFile, const DataSet& dataset, int compressionLevel = 6 );
+	bool ReadHDF5 ( const std::string& inputFile, DataSet& dataset );
 };
 
 void to_json ( nlohmann::json& j, const DataSet& a );

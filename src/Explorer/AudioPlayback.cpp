@@ -29,6 +29,9 @@ void Explorer::AudioPlayback::Initialise ( )
 		mAudioMorphEngine = std::make_shared<AudioMorphEngine>();
 		mAudioMorphEngine->Initialise(mSampleRate, mBufferSize, 0.75f);
 		
+		// Initialize cache manager
+		mCacheManager = std::make_shared<CacheManager>(256 * 1024 * 1024); // 256MB initial cache
+		
 		ofLogNotice ( "AudioPlayback" ) << "Morphing systems initialized successfully";
 	} catch ( const std::exception& e ) {
 		ofLogError ( "AudioPlayback" ) << "Failed to initialize AudioTransport: " << e.what();
@@ -866,39 +869,87 @@ bool Explorer::AudioPlayback::LoadAudioFile ( size_t fileIndex )
 		return false;
 	}
 	
-	// Check if already loaded
-	if ( audioData->loaded[fileIndex] )
+	// If cache is enabled, use it for loading
+	if ( mUseCacheManager && mCacheManager )
 	{
+		// Create cache key
+		CacheManager::AudioBufferKey key{fileIndex, 0}; // Using 0 for full file
+		
+		// Define loader function
+		auto loader = [this, fileIndex, dataset, audioData]() -> CacheManager::AudioBufferPtr {
+			ofLogNotice ( "AudioPlayback" ) << "Cache miss - loading audio file: " << dataset->fileList[fileIndex];
+			
+			// Use the AudioFileLoader class to load the file
+			fluid::RealVector audioVector;
+			if ( !Utils::AudioFileLoader::ReadAudioFile ( dataset->fileList[fileIndex], audioVector, mSampleRate ) )
+			{
+				ofLogError ( "AudioPlayback" ) << "Failed to load audio file: " << dataset->fileList[fileIndex];
+				return nullptr;
+			}
+			
+			// Convert to float vector for cache
+			auto buffer = std::make_shared<CacheManager::AudioBuffer>(audioVector.size());
+			for ( size_t i = 0; i < audioVector.size(); i++ )
+			{
+				(*buffer)[i] = static_cast<float>(audioVector[i]);
+			}
+			
+			return buffer;
+		};
+		
+		// Get from cache or load
+		auto cachedBuffer = mCacheManager->get(key, loader);
+		
+		if ( !cachedBuffer )
+		{
+			return false;
+		}
+		
+		// Copy to ofSoundBuffer
+		audioData->raw[fileIndex].allocate ( cachedBuffer->size(), 1 );
+		audioData->raw[fileIndex].setSampleRate( mSampleRate );
+		audioData->raw[fileIndex].copyFrom(cachedBuffer->data(), cachedBuffer->size(), 1, mSampleRate);
+		
+		audioData->loaded[fileIndex] = true;
 		return true;
 	}
-	
-	ofLogNotice ( "AudioPlayback" ) << "Loading audio file: " << dataset->fileList[fileIndex];
-	
-	// Use the AudioFileLoader class to load the file properly
-	fluid::RealVector audioVector;
-	if ( !Utils::AudioFileLoader::ReadAudioFile ( dataset->fileList[fileIndex], audioVector, mSampleRate ) )
+	else
 	{
-		ofLogError ( "AudioPlayback" ) << "Failed to load audio file: " << dataset->fileList[fileIndex];
-		return false;
+		// Original non-cached loading
+		// Check if already loaded
+		if ( audioData->loaded[fileIndex] )
+		{
+			return true;
+		}
+		
+		ofLogNotice ( "AudioPlayback" ) << "Loading audio file: " << dataset->fileList[fileIndex];
+		
+		// Use the AudioFileLoader class to load the file properly
+		fluid::RealVector audioVector;
+		if ( !Utils::AudioFileLoader::ReadAudioFile ( dataset->fileList[fileIndex], audioVector, mSampleRate ) )
+		{
+			ofLogError ( "AudioPlayback" ) << "Failed to load audio file: " << dataset->fileList[fileIndex];
+			return false;
+		}
+		
+		// Convert fluid::RealVector to ofSoundBuffer
+		// AudioFileLoader returns mono audio at the target sample rate
+		audioData->raw[fileIndex].allocate ( audioVector.size(), 1 );
+		audioData->raw[fileIndex].setSampleRate( mSampleRate );
+		
+		// Copy the audio data
+		std::vector<float> audioBuffer(audioVector.size());
+		for ( size_t i = 0; i < audioVector.size(); i++ )
+		{
+			audioBuffer[i] = static_cast<float>(audioVector[i]);
+		}
+		audioData->raw[fileIndex].copyFrom(audioBuffer.data(), audioBuffer.size(), 1, mSampleRate);
+		
+		audioData->loaded[fileIndex] = true;
+		ofLogNotice ( "AudioPlayback" ) << "Successfully loaded audio file";
+		
+		return true;
 	}
-	
-	// Convert fluid::RealVector to ofSoundBuffer
-	// AudioFileLoader returns mono audio at the target sample rate
-	audioData->raw[fileIndex].allocate ( audioVector.size(), 1 );
-	audioData->raw[fileIndex].setSampleRate( mSampleRate );
-	
-	// Copy the audio data
-	std::vector<float> audioBuffer(audioVector.size());
-	for ( size_t i = 0; i < audioVector.size(); i++ )
-	{
-		audioBuffer[i] = static_cast<float>(audioVector[i]);
-	}
-	audioData->raw[fileIndex].copyFrom(audioBuffer.data(), audioBuffer.size(), 1, mSampleRate);
-	
-	audioData->loaded[fileIndex] = true;
-	ofLogNotice ( "AudioPlayback" ) << "Successfully loaded audio file";
-	
-	return true;
 }
 
 void Explorer::AudioPlayback::SetMorphTargets ( const std::vector<std::pair<size_t, size_t>>& targets,
@@ -1349,4 +1400,12 @@ void Explorer::AudioPlayback::ProcessDiscreteMode ( ofSoundBuffer& outBuffer )
 		mPlayheads[playheadIndex].sampleIndex += samplesToProcess;
 		mPlayheads[playheadIndex].subFramePosition.store(static_cast<double>(mPlayheads[playheadIndex].sampleIndex));
 	}
+}
+
+CacheManager::CacheStats Explorer::AudioPlayback::GetCacheStats() const
+{
+	if (mCacheManager) {
+		return mCacheManager->getStats();
+	}
+	return CacheManager::CacheStats();
 }

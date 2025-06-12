@@ -132,8 +132,9 @@ PROJECT_CFLAGS = -I$(PROJECT_ROOT)/deps -I$(PROJECT_ROOT)/deps/memory -I$(PROJEC
 #
 #   Note: Leave a leading space when adding list items with the += operator
 ################################################################################
-# PROJECT_OPTIMIZATION_CFLAGS_RELEASE = 
-# PROJECT_OPTIMIZATION_CFLAGS_DEBUG = 
+PROJECT_OPTIMIZATION_CFLAGS_RELEASE = -O3 -march=native -ffast-math -funroll-loops
+PROJECT_OPTIMIZATION_CFLAGS_RELEASE += -ftree-vectorize -mfma -mavx2
+PROJECT_OPTIMIZATION_CFLAGS_DEBUG = -O0 -g 
 
 ################################################################################
 # PROJECT COMPILERS

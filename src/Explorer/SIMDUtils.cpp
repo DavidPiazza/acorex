@@ -305,6 +305,78 @@ void computeWeightedCircularMeanAVX(
         }
     }
 }
+
+// AVX implementation of window application
+void applyWindowAVX(const double* input, const double* window, size_t windowSize, double* output) {
+    size_t simdSize = (windowSize / 4) * 4;
+    
+    // Process 4 samples at a time
+    for (size_t i = 0; i < simdSize; i += 4) {
+        __m256d in = _mm256_loadu_pd(&input[i]);
+        __m256d win = _mm256_loadu_pd(&window[i]);
+        __m256d result = _mm256_mul_pd(in, win);
+        _mm256_storeu_pd(&output[i], result);
+    }
+    
+    // Handle remaining samples
+    for (size_t i = simdSize; i < windowSize; ++i) {
+        output[i] = input[i] * window[i];
+    }
+}
+
+// AVX implementation of overlap-add
+void overlapAddAVX(const double* input, double* accumulator, size_t frameSize, size_t hopSize) {
+    size_t simdSize = (frameSize / 4) * 4;
+    
+    // Process 4 samples at a time
+    for (size_t i = 0; i < simdSize; i += 4) {
+        __m256d in = _mm256_loadu_pd(&input[i]);
+        __m256d acc = _mm256_loadu_pd(&accumulator[i]);
+        __m256d result = _mm256_add_pd(acc, in);
+        _mm256_storeu_pd(&accumulator[i], result);
+    }
+    
+    // Handle remaining samples
+    for (size_t i = simdSize; i < frameSize; ++i) {
+        accumulator[i] += input[i];
+    }
+}
+
+// AVX implementation of complex to magnitude/phase conversion
+void complexToMagPhaseAVX(const std::complex<double>* spectrum, size_t numBins,
+                         double* magnitudes, double* phases) {
+    // Process 2 complex numbers at a time (4 doubles)
+    size_t simdBins = (numBins / 2) * 2;
+    
+    for (size_t i = 0; i < simdBins; i += 2) {
+        // Load 2 complex numbers (real0, imag0, real1, imag1)
+        __m256d complexVec = _mm256_loadu_pd(reinterpret_cast<const double*>(&spectrum[i]));
+        
+        // Extract real and imaginary parts
+        __m256d realParts = _mm256_shuffle_pd(complexVec, complexVec, 0x0); // real0, real0, real1, real1
+        __m256d imagParts = _mm256_shuffle_pd(complexVec, complexVec, 0xF); // imag0, imag0, imag1, imag1
+        
+        // Compute magnitudes: sqrt(real^2 + imag^2)
+        __m256d real2 = _mm256_mul_pd(realParts, realParts);
+        __m256d imag2 = _mm256_mul_pd(imagParts, imagParts);
+        __m256d sum = _mm256_add_pd(real2, imag2);
+        __m256d mags = _mm256_sqrt_pd(sum);
+        
+        // Store magnitudes (we only need elements 0 and 2)
+        magnitudes[i] = mags[0];
+        magnitudes[i+1] = mags[2];
+        
+        // Compute phases using atan2 (scalar fallback for now)
+        phases[i] = std::atan2(spectrum[i].imag(), spectrum[i].real());
+        phases[i+1] = std::atan2(spectrum[i+1].imag(), spectrum[i+1].real());
+    }
+    
+    // Handle remaining bins
+    for (size_t i = simdBins; i < numBins; ++i) {
+        magnitudes[i] = std::abs(spectrum[i]);
+        phases[i] = std::arg(spectrum[i]);
+    }
+}
 #endif
 
 // Scalar implementations
@@ -467,6 +539,70 @@ void applyPhaseSmoothing(double* phases, size_t numBins) {
     std::memcpy(phases, smoothedPhases.data(), numBins * sizeof(double));
 }
 
+void applyWindow(const double* input, const double* window, size_t windowSize, double* output) {
+    for (size_t i = 0; i < windowSize; ++i) {
+        output[i] = input[i] * window[i];
+    }
+}
+
+void overlapAdd(const double* input, double* accumulator, size_t frameSize, size_t hopSize) {
+    for (size_t i = 0; i < frameSize; ++i) {
+        accumulator[i] += input[i];
+    }
+}
+
+void complexToMagPhase(const std::complex<double>* spectrum, size_t numBins,
+                      double* magnitudes, double* phases) {
+    for (size_t i = 0; i < numBins; ++i) {
+        magnitudes[i] = std::abs(spectrum[i]);
+        phases[i] = std::arg(spectrum[i]);
+    }
+}
+
+void magPhaseToComplex(const double* magnitudes, const double* phases,
+                      size_t numBins, std::complex<double>* spectrum) {
+    for (size_t i = 0; i < numBins; ++i) {
+        spectrum[i] = std::polar(magnitudes[i], phases[i]);
+    }
+}
+
+void phaseUnwrap(double* phases, size_t numBins) {
+    if (numBins < 2) return;
+    
+    for (size_t i = 1; i < numBins; ++i) {
+        double diff = phases[i] - phases[i-1];
+        
+        // Unwrap phase jumps greater than π
+        while (diff > M_PI) {
+            phases[i] -= 2.0 * M_PI;
+            diff = phases[i] - phases[i-1];
+        }
+        while (diff < -M_PI) {
+            phases[i] += 2.0 * M_PI;
+            diff = phases[i] - phases[i-1];
+        }
+    }
+}
+
+void findSpectralPeaks(const double* magnitudes, size_t numBins, double threshold,
+                      size_t* peaks, size_t& numPeaks) {
+    numPeaks = 0;
+    const size_t maxPeaks = 1024; // Reasonable limit
+    
+    // Skip DC and Nyquist bins
+    for (size_t i = 1; i < numBins - 1; ++i) {
+        // Check if this bin is a local maximum above threshold
+        if (magnitudes[i] > threshold &&
+            magnitudes[i] > magnitudes[i-1] &&
+            magnitudes[i] > magnitudes[i+1]) {
+            
+            peaks[numPeaks++] = i;
+            
+            if (numPeaks >= maxPeaks) break;
+        }
+    }
+}
+
 } // namespace Scalar
 
 // Runtime dispatcher implementation
@@ -495,6 +631,28 @@ SIMDDispatcher::SIMDDispatcher() {
     
     // Phase smoothing is currently scalar only
     phaseSmoothing = Scalar::applyPhaseSmoothing;
+    
+    // Initialize new function pointers
+#if defined(__AVX__)
+    if (hasFeature(features, CpuFeatures::AVX)) {
+        applyWindow = applyWindowAVX;
+        overlapAdd = overlapAddAVX;
+        complexToMagPhase = complexToMagPhaseAVX;
+        // TODO: Add AVX implementations for remaining functions
+        magPhaseToComplex = Scalar::magPhaseToComplex;
+        phaseUnwrap = Scalar::phaseUnwrap;
+        findSpectralPeaks = Scalar::findSpectralPeaks;
+    } else
+#endif
+    {
+        // Fallback to scalar implementations
+        applyWindow = Scalar::applyWindow;
+        overlapAdd = Scalar::overlapAdd;
+        complexToMagPhase = Scalar::complexToMagPhase;
+        magPhaseToComplex = Scalar::magPhaseToComplex;
+        phaseUnwrap = Scalar::phaseUnwrap;
+        findSpectralPeaks = Scalar::findSpectralPeaks;
+    }
 }
 
 // Public API functions that use runtime dispatch
@@ -524,6 +682,39 @@ void computeWeightedCircularMeanSIMD(
 void applyPhaseSmoothingSIMD(double* phases, size_t numBins) {
     const auto& dispatcher = SIMDDispatcher::getInstance();
     dispatcher.phaseSmoothing(phases, numBins);
+}
+
+void applyWindowSIMD(const double* input, const double* window, size_t windowSize, double* output) {
+    const auto& dispatcher = SIMDDispatcher::getInstance();
+    dispatcher.applyWindow(input, window, windowSize, output);
+}
+
+void overlapAddSIMD(const double* input, double* accumulator, size_t frameSize, size_t hopSize) {
+    const auto& dispatcher = SIMDDispatcher::getInstance();
+    dispatcher.overlapAdd(input, accumulator, frameSize, hopSize);
+}
+
+void complexToMagPhaseSIMD(const std::complex<double>* spectrum, size_t numBins, 
+                          double* magnitudes, double* phases) {
+    const auto& dispatcher = SIMDDispatcher::getInstance();
+    dispatcher.complexToMagPhase(spectrum, numBins, magnitudes, phases);
+}
+
+void magPhaseToComplexSIMD(const double* magnitudes, const double* phases, 
+                          size_t numBins, std::complex<double>* spectrum) {
+    const auto& dispatcher = SIMDDispatcher::getInstance();
+    dispatcher.magPhaseToComplex(magnitudes, phases, numBins, spectrum);
+}
+
+void phaseUnwrapSIMD(double* phases, size_t numBins) {
+    const auto& dispatcher = SIMDDispatcher::getInstance();
+    dispatcher.phaseUnwrap(phases, numBins);
+}
+
+void findSpectralPeaksSIMD(const double* magnitudes, size_t numBins, double threshold,
+                          size_t* peaks, size_t& numPeaks) {
+    const auto& dispatcher = SIMDDispatcher::getInstance();
+    dispatcher.findSpectralPeaks(magnitudes, numBins, threshold, peaks, numPeaks);
 }
 
 } // namespace SIMD

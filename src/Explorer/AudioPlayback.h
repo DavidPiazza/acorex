@@ -31,6 +31,7 @@ WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN 
 #include "AudioMorphEngine.h"
 #include <data/TensorTypes.hpp>
 #include <data/FluidMemory.hpp>
+#include "CacheManager.h"
 
 namespace Acorex {
 namespace Explorer {
@@ -90,6 +91,11 @@ public:
 	PlaybackMode GetPlaybackMode ( ) const { return mPlaybackMode.load(); }
 	bool IsDiscreteMode ( ) const { return mPlaybackMode.load() == PlaybackMode::DISCRETE; }
 	bool IsContinuousMode ( ) const { return mPlaybackMode.load() == PlaybackMode::CONTINUOUS; }
+	
+	// Cache management
+	void EnableCache(bool enable) { mUseCacheManager = enable; }
+	bool IsCacheEnabled() const { return mUseCacheManager; }
+	CacheManager::CacheStats GetCacheStats() const;
 	
 	// AudioMorphEngine integration
 	std::shared_ptr<AudioMorphEngine> GetAudioMorphEngine ( ) { return mAudioMorphEngine; }
@@ -202,6 +208,10 @@ private:
 	PlaybackMode mTransitionTargetMode{PlaybackMode::DISCRETE};
 	ofSoundBuffer mTransitionBuffer;
 	std::mutex mTransitionMutex;
+	
+	// Cache management
+	bool mUseCacheManager = true;
+	std::shared_ptr<CacheManager> mCacheManager;
 };
 
 } // namespace Explorer

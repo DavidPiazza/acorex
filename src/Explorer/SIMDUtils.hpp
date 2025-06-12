@@ -19,6 +19,7 @@ WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN 
 #include <cstddef>
 #include <cstdint>
 #include <cmath>
+#include <complex>
 
 #if defined(__SSE2__)
 #include <emmintrin.h>
@@ -92,6 +93,53 @@ void applyPhaseSmoothingSIMD(
     size_t numBins                   // Number of frequency bins
 );
 
+// SIMD-optimized window application
+void applyWindowSIMD(
+    const double* input,             // Input audio buffer
+    const double* window,            // Window function
+    size_t windowSize,               // Size of window
+    double* output                   // Output buffer
+);
+
+// SIMD-optimized overlap-add accumulation
+void overlapAddSIMD(
+    const double* input,             // Input windowed frame
+    double* accumulator,             // Accumulator buffer
+    size_t frameSize,                // Size of frame
+    size_t hopSize                   // Hop size
+);
+
+// SIMD-optimized complex spectrum to magnitude/phase conversion
+void complexToMagPhaseSIMD(
+    const std::complex<double>* spectrum,  // Complex spectrum
+    size_t numBins,                       // Number of frequency bins
+    double* magnitudes,                   // Output magnitudes
+    double* phases                        // Output phases
+);
+
+// SIMD-optimized magnitude/phase to complex spectrum conversion
+void magPhaseToComplexSIMD(
+    const double* magnitudes,             // Input magnitudes
+    const double* phases,                 // Input phases
+    size_t numBins,                      // Number of frequency bins
+    std::complex<double>* spectrum       // Output complex spectrum
+);
+
+// SIMD-optimized phase unwrapping
+void phaseUnwrapSIMD(
+    double* phases,                      // Phase array (modified in-place)
+    size_t numBins                       // Number of frequency bins
+);
+
+// SIMD-optimized spectral peak detection
+void findSpectralPeaksSIMD(
+    const double* magnitudes,            // Magnitude spectrum
+    size_t numBins,                     // Number of frequency bins
+    double threshold,                   // Peak threshold
+    size_t* peaks,                      // Output peak indices
+    size_t& numPeaks                   // Number of peaks found
+);
+
 // Scalar fallback implementations
 namespace Scalar {
     void computeWeightedGeometricMean(
@@ -115,6 +163,47 @@ namespace Scalar {
         double* phases,
         size_t numBins
     );
+    
+    void applyWindow(
+        const double* input,
+        const double* window,
+        size_t windowSize,
+        double* output
+    );
+    
+    void overlapAdd(
+        const double* input,
+        double* accumulator,
+        size_t frameSize,
+        size_t hopSize
+    );
+    
+    void complexToMagPhase(
+        const std::complex<double>* spectrum,
+        size_t numBins,
+        double* magnitudes,
+        double* phases
+    );
+    
+    void magPhaseToComplex(
+        const double* magnitudes,
+        const double* phases,
+        size_t numBins,
+        std::complex<double>* spectrum
+    );
+    
+    void phaseUnwrap(
+        double* phases,
+        size_t numBins
+    );
+    
+    void findSpectralPeaks(
+        const double* magnitudes,
+        size_t numBins,
+        double threshold,
+        size_t* peaks,
+        size_t& numPeaks
+    );
 }
 
 // Function pointer types for runtime dispatch
@@ -123,12 +212,24 @@ using WeightedGeometricMeanFunc = void(*)(
 using WeightedCircularMeanFunc = void(*)(
     const double* const*, const double* const*, const double*, size_t, size_t, double*);
 using PhaseSmoothingFunc = void(*)(double*, size_t);
+using WindowFunc = void(*)(const double*, const double*, size_t, double*);
+using OverlapAddFunc = void(*)(const double*, double*, size_t, size_t);
+using ComplexToMagPhaseFunc = void(*)(const std::complex<double>*, size_t, double*, double*);
+using MagPhaseToComplexFunc = void(*)(const double*, const double*, size_t, std::complex<double>*);
+using PhaseUnwrapFunc = void(*)(double*, size_t);
+using SpectralPeaksFunc = void(*)(const double*, size_t, double, size_t*, size_t&);
 
 // Runtime dispatch structure
 struct SIMDDispatcher {
     WeightedGeometricMeanFunc weightedGeometricMean;
     WeightedCircularMeanFunc weightedCircularMean;
     PhaseSmoothingFunc phaseSmoothing;
+    WindowFunc applyWindow;
+    OverlapAddFunc overlapAdd;
+    ComplexToMagPhaseFunc complexToMagPhase;
+    MagPhaseToComplexFunc magPhaseToComplex;
+    PhaseUnwrapFunc phaseUnwrap;
+    SpectralPeaksFunc findSpectralPeaks;
     CpuFeatures features;
     
     SIMDDispatcher();

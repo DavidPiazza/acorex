@@ -18,6 +18,11 @@ WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN 
 #include <cstring>
 #include <algorithm>
 #include <vector>
+#include <cmath>
+
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
 
 #if defined(_MSC_VER)
 #include <intrin.h>
@@ -37,8 +42,8 @@ CpuFeatures detectCpuFeatures() {
     CpuFeatures features = CpuFeatures::None;
     
 #if defined(__aarch64__) || defined(__ARM_NEON)
-    // ARM processors don't have SSE/AVX, but we can still use scalar optimizations
-    // NEON is the ARM SIMD extension, but we're not implementing it here
+    // ARM processors support NEON SIMD
+    features = features | CpuFeatures::NEON;
     return features;
     
 #elif defined(_MSC_VER) && (defined(_M_AMD64) || defined(_M_IX86))
@@ -193,6 +198,269 @@ void computeWeightedGeometricMeanSSE(
         result[bin] = std::exp(logSum);
         if (!std::isfinite(result[bin])) {
             result[bin] = 0.0;
+        }
+    }
+}
+#endif
+
+// ARM NEON implementation of weighted geometric mean
+#if defined(__ARM_NEON) || defined(__aarch64__)
+void computeWeightedGeometricMeanNEON(
+    const double* const* magnitudes,
+    const double* weights,
+    size_t numSources,
+    size_t numBins,
+    double* result) {
+    
+    const double epsilon = 1e-10;
+    const float epsilon_f = 1e-10f;
+    
+    // Check for single source dominance
+    for (size_t i = 0; i < numSources; ++i) {
+        if (std::abs(weights[i] - 1.0) < 1e-6) {
+            std::memcpy(result, magnitudes[i], numBins * sizeof(double));
+            return;
+        }
+    }
+    
+    // Process 4 bins at a time using float32x4_t
+    // Note: We convert double to float for NEON processing, then back to double
+    size_t simdBins = (numBins / 4) * 4;
+    
+    for (size_t bin = 0; bin < simdBins; bin += 4) {
+        float32x4_t logSum = vdupq_n_f32(0.0f);
+        
+        for (size_t src = 0; src < numSources; ++src) {
+            if (weights[src] > epsilon) {
+                float weight_f = static_cast<float>(weights[src]);
+                float32x4_t weight = vdupq_n_f32(weight_f);
+                
+                // Convert magnitudes to float
+                float mags_f[4];
+                for (int i = 0; i < 4; ++i) {
+                    mags_f[i] = static_cast<float>(magnitudes[src][bin + i]);
+                }
+                float32x4_t mag = vld1q_f32(mags_f);
+                
+                // Add epsilon for numerical stability
+                float32x4_t eps = vdupq_n_f32(epsilon_f * weight_f);
+                mag = vaddq_f32(mag, eps);
+                
+                // Compute weighted log using NEON approximation
+                float32x4_t logMag = neon_log_ps(mag);
+                logSum = vfmaq_f32(logSum, weight, logMag);
+            }
+        }
+        
+        // Convert back from log domain
+        float32x4_t res = neon_exp_ps(logSum);
+        
+        // Convert back to double and store
+        float res_f[4];
+        vst1q_f32(res_f, res);
+        for (int i = 0; i < 4; ++i) {
+            result[bin + i] = static_cast<double>(res_f[i]);
+            if (!std::isfinite(result[bin + i])) {
+                result[bin + i] = 0.0;
+            }
+        }
+    }
+    
+    // Handle remaining bins
+    for (size_t bin = simdBins; bin < numBins; ++bin) {
+        double logSum = 0.0;
+        
+        for (size_t src = 0; src < numSources; ++src) {
+            if (weights[src] > epsilon) {
+                logSum += weights[src] * std::log(magnitudes[src][bin] + epsilon * weights[src]);
+            }
+        }
+        
+        result[bin] = std::exp(logSum);
+        if (!std::isfinite(result[bin])) {
+            result[bin] = 0.0;
+        }
+    }
+}
+
+// ARM NEON implementation of weighted circular mean
+void computeWeightedCircularMeanNEON(
+    const double* const* phases,
+    const double* const* magnitudes,
+    const double* weights,
+    size_t numSources,
+    size_t numBins,
+    double* result) {
+    
+    const double epsilon = 1e-10;
+    const float epsilon_f = 1e-10f;
+    
+    // Process 4 bins at a time
+    size_t simdBins = (numBins / 4) * 4;
+    
+    for (size_t bin = 0; bin < simdBins; bin += 4) {
+        float32x4_t sumX = vdupq_n_f32(0.0f);
+        float32x4_t sumY = vdupq_n_f32(0.0f);
+        float32x4_t totalWeight = vdupq_n_f32(0.0f);
+        
+        for (size_t src = 0; src < numSources; ++src) {
+            if (weights[src] > epsilon) {
+                float weight_f = static_cast<float>(weights[src]);
+                float32x4_t weight = vdupq_n_f32(weight_f);
+                
+                // Convert magnitudes and phases to float
+                float mags_f[4], phases_f[4];
+                for (int i = 0; i < 4; ++i) {
+                    mags_f[i] = static_cast<float>(magnitudes[src][bin + i]);
+                    phases_f[i] = static_cast<float>(phases[src][bin + i]);
+                }
+                float32x4_t mag = vld1q_f32(mags_f);
+                float32x4_t phase = vld1q_f32(phases_f);
+                
+                // Combined weight: barycentric weight * magnitude
+                float32x4_t w = vmulq_f32(weight, mag);
+                
+                // Only process if weight is significant
+                uint32x4_t mask = vcgtq_f32(w, vdupq_n_f32(epsilon_f));
+                w = vbslq_f32(mask, w, vdupq_n_f32(0.0f));
+                
+                // Compute weighted unit vectors using NEON trig approximations
+                float32x4_t cosPhase = neon_cos_ps(phase);
+                float32x4_t sinPhase = neon_sin_ps(phase);
+                
+                sumX = vfmaq_f32(sumX, w, cosPhase);
+                sumY = vfmaq_f32(sumY, w, sinPhase);
+                totalWeight = vaddq_f32(totalWeight, w);
+            }
+        }
+        
+        // Compute mean resultant vector
+        float32x4_t invWeight = vdivq_f32(vdupq_n_f32(1.0f), 
+                                         vmaxq_f32(totalWeight, vdupq_n_f32(epsilon_f)));
+        float32x4_t meanX = vmulq_f32(sumX, invWeight);
+        float32x4_t meanY = vmulq_f32(sumY, invWeight);
+        
+        // Compute circular mean phase using NEON atan2
+        float32x4_t meanPhase = neon_atan2_ps(meanY, meanX);
+        
+        // Convert back to double and store
+        float phase_f[4];
+        vst1q_f32(phase_f, meanPhase);
+        for (int i = 0; i < 4; ++i) {
+            result[bin + i] = static_cast<double>(phase_f[i]);
+        }
+    }
+    
+    // Handle remaining bins with scalar code
+    for (size_t bin = simdBins; bin < numBins; ++bin) {
+        double sumX = 0.0;
+        double sumY = 0.0;
+        double totalWeight = 0.0;
+        
+        for (size_t src = 0; src < numSources; ++src) {
+            if (weights[src] > epsilon && magnitudes[src][bin] > epsilon) {
+                double w = weights[src] * magnitudes[src][bin];
+                double phase = phases[src][bin];
+                
+                sumX += w * std::cos(phase);
+                sumY += w * std::sin(phase);
+                totalWeight += w;
+            }
+        }
+        
+        if (totalWeight > epsilon) {
+            double meanX = sumX / totalWeight;
+            double meanY = sumY / totalWeight;
+            result[bin] = std::atan2(meanY, meanX);
+        } else {
+            result[bin] = 0.0;
+        }
+    }
+}
+
+// ARM NEON implementation of phase smoothing
+void applyPhaseSmoothingNEON(double* phases, size_t numBins) {
+    if (numBins < 3) return;
+    
+    const float32x4_t pi = vdupq_n_f32(M_PI);
+    const float32x4_t two_pi = vdupq_n_f32(2.0f * M_PI);
+    const float32x4_t neg_two_pi = vdupq_n_f32(-2.0f * M_PI);
+    
+    // Process 4 bins at a time
+    size_t simdBins = ((numBins - 2) / 4) * 4 + 1;
+    
+    for (size_t i = 1; i < simdBins && i < numBins - 1; i += 4) {
+        size_t count = std::min(size_t(4), numBins - 1 - i);
+        
+        // Load current phases and convert to float
+        float curr_f[4], prev_f[4], next_f[4];
+        for (size_t j = 0; j < count; ++j) {
+            curr_f[j] = static_cast<float>(phases[i + j]);
+            prev_f[j] = static_cast<float>(phases[i + j - 1]);
+            next_f[j] = static_cast<float>(phases[i + j + 1]);
+        }
+        
+        float32x4_t curr = vld1q_f32(curr_f);
+        float32x4_t prev = vld1q_f32(prev_f);
+        float32x4_t next = vld1q_f32(next_f);
+        
+        // Compute differences
+        float32x4_t diff_prev = vsubq_f32(curr, prev);
+        float32x4_t diff_next = vsubq_f32(next, curr);
+        
+        // Wrap differences to [-pi, pi]
+        uint32x4_t mask_gt_pi = vcgtq_f32(diff_prev, pi);
+        uint32x4_t mask_lt_neg_pi = vcltq_f32(diff_prev, vnegq_f32(pi));
+        diff_prev = vbslq_f32(mask_gt_pi, vsubq_f32(diff_prev, two_pi), diff_prev);
+        diff_prev = vbslq_f32(mask_lt_neg_pi, vaddq_f32(diff_prev, two_pi), diff_prev);
+        
+        mask_gt_pi = vcgtq_f32(diff_next, pi);
+        mask_lt_neg_pi = vcltq_f32(diff_next, vnegq_f32(pi));
+        diff_next = vbslq_f32(mask_gt_pi, vsubq_f32(diff_next, two_pi), diff_next);
+        diff_next = vbslq_f32(mask_lt_neg_pi, vaddq_f32(diff_next, two_pi), diff_next);
+        
+        // Apply smoothing if both differences have the same sign
+        float32x4_t sign_prev = vbslq_f32(vcltq_f32(diff_prev, vdupq_n_f32(0.0f)), 
+                                          vdupq_n_f32(-1.0f), vdupq_n_f32(1.0f));
+        float32x4_t sign_next = vbslq_f32(vcltq_f32(diff_next, vdupq_n_f32(0.0f)), 
+                                          vdupq_n_f32(-1.0f), vdupq_n_f32(1.0f));
+        
+        uint32x4_t same_sign = vceqq_f32(sign_prev, sign_next);
+        
+        // Smooth phase: (prev + curr + next) / 3
+        float32x4_t sum = vaddq_f32(vaddq_f32(prev, curr), next);
+        float32x4_t smoothed = vmulq_f32(sum, vdupq_n_f32(1.0f / 3.0f));
+        
+        // Apply smoothing only where signs match
+        curr = vbslq_f32(same_sign, smoothed, curr);
+        
+        // Convert back to double and store
+        float result_f[4];
+        vst1q_f32(result_f, curr);
+        for (size_t j = 0; j < count; ++j) {
+            phases[i + j] = static_cast<double>(result_f[j]);
+        }
+    }
+    
+    // Handle remaining bins with scalar code
+    for (size_t i = simdBins; i < numBins - 1; ++i) {
+        double prev = phases[i - 1];
+        double curr = phases[i];
+        double next = phases[i + 1];
+        
+        // Compute phase differences
+        double diff_prev = curr - prev;
+        double diff_next = next - curr;
+        
+        // Wrap differences to [-pi, pi]
+        while (diff_prev > M_PI) diff_prev -= 2.0 * M_PI;
+        while (diff_prev < -M_PI) diff_prev += 2.0 * M_PI;
+        while (diff_next > M_PI) diff_next -= 2.0 * M_PI;
+        while (diff_next < -M_PI) diff_next += 2.0 * M_PI;
+        
+        // Apply smoothing if both differences have the same sign
+        if (diff_prev * diff_next > 0) {
+            phases[i] = (prev + curr + next) / 3.0;
         }
     }
 }
@@ -377,6 +645,26 @@ void complexToMagPhaseAVX(const std::complex<double>* spectrum, size_t numBins,
         phases[i] = std::arg(spectrum[i]);
     }
 }
+#endif
+
+// Forward declarations for NEON implementations
+#if defined(__ARM_NEON) || defined(__aarch64__)
+void computeWeightedGeometricMeanNEON(
+    const double* const* magnitudes,
+    const double* weights,
+    size_t numSources,
+    size_t numBins,
+    double* result);
+
+void computeWeightedCircularMeanNEON(
+    const double* const* phases,
+    const double* const* magnitudes,
+    const double* weights,
+    size_t numSources,
+    size_t numBins,
+    double* result);
+
+void applyPhaseSmoothingNEON(double* phases, size_t numBins);
 #endif
 
 // Scalar implementations
@@ -610,10 +898,18 @@ SIMDDispatcher::SIMDDispatcher() {
     features = detectCpuFeatures();
     
     // Select best available implementation
+#if defined(__ARM_NEON) || defined(__aarch64__)
+    if (hasFeature(features, CpuFeatures::NEON)) {
+        weightedGeometricMean = computeWeightedGeometricMeanNEON;
+        weightedCircularMean = computeWeightedCircularMeanNEON;
+        phaseSmoothing = applyPhaseSmoothingNEON;
+    } else
+#endif
 #if defined(__AVX__)
     if (hasFeature(features, CpuFeatures::AVX)) {
         weightedGeometricMean = computeWeightedGeometricMeanAVX;
         weightedCircularMean = computeWeightedCircularMeanAVX;
+        phaseSmoothing = Scalar::applyPhaseSmoothing;
     } else
 #endif
 #if defined(__SSE2__)
@@ -621,18 +917,28 @@ SIMDDispatcher::SIMDDispatcher() {
         weightedGeometricMean = computeWeightedGeometricMeanSSE;
         // No SSE2 circular mean yet, use scalar
         weightedCircularMean = Scalar::computeWeightedCircularMean;
+        phaseSmoothing = Scalar::applyPhaseSmoothing;
     } else
 #endif
     {
         // Fallback to scalar implementation
         weightedGeometricMean = Scalar::computeWeightedGeometricMean;
         weightedCircularMean = Scalar::computeWeightedCircularMean;
+        phaseSmoothing = Scalar::applyPhaseSmoothing;
     }
     
-    // Phase smoothing is currently scalar only
-    phaseSmoothing = Scalar::applyPhaseSmoothing;
-    
     // Initialize new function pointers
+#if defined(__ARM_NEON) || defined(__aarch64__)
+    if (hasFeature(features, CpuFeatures::NEON)) {
+        // TODO: Add NEON implementations for window/overlap/complex functions
+        applyWindow = Scalar::applyWindow;
+        overlapAdd = Scalar::overlapAdd;
+        complexToMagPhase = Scalar::complexToMagPhase;
+        magPhaseToComplex = Scalar::magPhaseToComplex;
+        phaseUnwrap = Scalar::phaseUnwrap;
+        findSpectralPeaks = Scalar::findSpectralPeaks;
+    } else
+#endif
 #if defined(__AVX__)
     if (hasFeature(features, CpuFeatures::AVX)) {
         applyWindow = applyWindowAVX;

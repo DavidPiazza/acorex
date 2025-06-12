@@ -148,4 +148,27 @@ PROJECT_OPTIMIZATION_CFLAGS_DEBUG = -O0 -g
 
 # Uncomment/comment below to switch between C++11 and C++17 ( or newer ). On macOS C++17 needs 10.15 or above.
 export MAC_OS_MIN_VERSION = 10.15
+
+################################################################################
+# CUSTOM TEST TARGETS
+################################################################################
+.PHONY: test-neon benchmark-simd
+
+test-neon: src/TestNEON.cpp src/Explorer/SIMDUtils.cpp
+	@echo "Building ARM NEON test..."
+	$(CXX) $(PROJECT_CFLAGS) $(PROJECT_OPTIMIZATION_CFLAGS_RELEASE) -std=c++17 \
+		-I$(PROJECT_ROOT)/src -I$(PROJECT_ROOT)/deps \
+		src/TestNEON.cpp src/Explorer/SIMDUtils.cpp \
+		-o bin/test-neon
+	@echo "Running ARM NEON test..."
+	./bin/test-neon
+
+benchmark-simd: src/Explorer/BenchmarkSIMD.cpp src/Explorer/SIMDUtils.cpp src/RunBenchmarks.cpp
+	@echo "Building SIMD benchmarks..."
+	$(CXX) $(PROJECT_CFLAGS) $(PROJECT_OPTIMIZATION_CFLAGS_RELEASE) -std=c++17 \
+		-I$(PROJECT_ROOT)/src -I$(PROJECT_ROOT)/deps \
+		src/RunBenchmarks.cpp src/Explorer/BenchmarkSIMD.cpp src/Explorer/SIMDUtils.cpp \
+		-o bin/benchmark-simd
+	@echo "Running SIMD benchmarks..."
+	./bin/benchmark-simd
 export MAC_OS_CPP_VER = -std=c++17

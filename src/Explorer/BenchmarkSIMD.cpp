@@ -74,6 +74,7 @@ private:
         if (SIMD::hasFeature(features, SIMD::CpuFeatures::AVX)) result += "AVX ";
         if (SIMD::hasFeature(features, SIMD::CpuFeatures::AVX2)) result += "AVX2 ";
         if (SIMD::hasFeature(features, SIMD::CpuFeatures::FMA)) result += "FMA ";
+        if (SIMD::hasFeature(features, SIMD::CpuFeatures::NEON)) result += "NEON ";
         
         if (result.empty()) result = "None";
         return result;

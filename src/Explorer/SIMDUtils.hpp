@@ -41,6 +41,17 @@ WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN 
 #include <immintrin.h>
 #endif
 
+#if defined(__ARM_NEON) || defined(__aarch64__)
+#include <arm_neon.h>
+#endif
+
+// Platform-specific memory alignment
+#if defined(__ARM_NEON) || defined(__aarch64__)
+    #define ARM_NEON_ALIGN __attribute__((aligned(16)))
+#else
+    #define ARM_NEON_ALIGN
+#endif
+
 namespace Acorex {
 namespace Explorer {
 namespace SIMD {
@@ -51,7 +62,8 @@ enum class CpuFeatures : uint32_t {
     SSE41 = 1 << 1,
     AVX = 1 << 2,
     AVX2 = 1 << 3,
-    FMA = 1 << 4
+    FMA = 1 << 4,
+    NEON = 1 << 5
 };
 
 inline CpuFeatures operator|(CpuFeatures a, CpuFeatures b) {
@@ -322,6 +334,141 @@ inline __m128d exp_pd_sse(__m128d x) {
     p = _mm_add_pd(_mm_mul_pd(p, f), _mm_set1_pd(1.0));
     
     return _mm_mul_pd(pow2_k, p);
+}
+#endif
+
+// ARM NEON helper functions
+#if defined(__ARM_NEON) || defined(__aarch64__)
+// NEON exp approximation for float32x4_t
+inline float32x4_t neon_exp_ps(float32x4_t x) {
+    const float32x4_t log2e = vdupq_n_f32(1.4426950408889634f);
+    const float32x4_t ln2 = vdupq_n_f32(0.6931471805599453f);
+    const float32x4_t one = vdupq_n_f32(1.0f);
+    
+    // Compute x / log(2)
+    float32x4_t a = vmulq_f32(x, log2e);
+    
+    // Extract integer and fractional parts
+    float32x4_t k = vrndnq_f32(a);  // round to nearest
+    float32x4_t f = vsubq_f32(a, k);
+    
+    // Compute 2^k by bit manipulation
+    int32x4_t ki = vcvtq_s32_f32(k);
+    int32x4_t exp_k = vaddq_s32(ki, vdupq_n_s32(127));
+    exp_k = vshlq_n_s32(exp_k, 23);
+    float32x4_t pow2_k = vreinterpretq_f32_s32(exp_k);
+    
+    // Polynomial approximation of exp(f * ln(2))
+    float32x4_t p = vdupq_n_f32(0.0013530747f);
+    p = vfmaq_f32(vdupq_n_f32(0.0096824656f), p, f);
+    p = vfmaq_f32(vdupq_n_f32(0.0555044437f), p, f);
+    p = vfmaq_f32(vdupq_n_f32(0.2402264689f), p, f);
+    p = vfmaq_f32(vdupq_n_f32(0.6931471806f), p, f);
+    p = vfmaq_f32(one, p, f);
+    
+    return vmulq_f32(pow2_k, p);
+}
+
+// NEON log approximation for float32x4_t
+inline float32x4_t neon_log_ps(float32x4_t x) {
+    const float32x4_t ln2 = vdupq_n_f32(0.6931471805599453f);
+    const int32x4_t exp_mask = vdupq_n_s32(0x7F800000);
+    const int32x4_t mantissa_mask = vdupq_n_s32(0x007FFFFF);
+    const int32x4_t exp_bias = vdupq_n_s32(127);
+    
+    // Extract exponent and mantissa
+    int32x4_t xi = vreinterpretq_s32_f32(x);
+    int32x4_t exp = vshrq_n_s32(vandq_s32(xi, exp_mask), 23);
+    exp = vsubq_s32(exp, exp_bias);
+    float32x4_t e = vcvtq_f32_s32(exp);
+    
+    // Normalize mantissa to [1, 2)
+    int32x4_t mant = vorrq_s32(vandq_s32(xi, mantissa_mask), vdupq_n_s32(0x3F800000));
+    float32x4_t m = vreinterpretq_f32_s32(mant);
+    
+    // Polynomial approximation of log(m) for m in [1, 2)
+    float32x4_t p = vdupq_n_f32(-0.6491106f);
+    p = vfmaq_f32(vdupq_n_f32(3.0734525f), p, m);
+    p = vfmaq_f32(vdupq_n_f32(-5.4195777f), p, m);
+    p = vfmaq_f32(vdupq_n_f32(3.9754935f), p, m);
+    
+    // Combine: log(x) = log(m * 2^e) = log(m) + e * log(2)
+    return vfmaq_f32(p, e, ln2);
+}
+
+// NEON sin approximation for float32x4_t
+inline float32x4_t neon_sin_ps(float32x4_t x) {
+    // Range reduction to [-pi, pi]
+    const float32x4_t inv_pi = vdupq_n_f32(0.318309886f);
+    const float32x4_t pi = vdupq_n_f32(3.141592654f);
+    const float32x4_t two_pi = vdupq_n_f32(6.283185307f);
+    
+    // Reduce x to [-pi, pi]
+    float32x4_t k = vrndnq_f32(vmulq_f32(x, inv_pi));
+    x = vfmsq_f32(x, k, two_pi);
+    
+    // Taylor series approximation
+    float32x4_t x2 = vmulq_f32(x, x);
+    float32x4_t p = vdupq_n_f32(-1.0f/5040.0f);  // -1/7!
+    p = vfmaq_f32(vdupq_n_f32(1.0f/120.0f), p, x2);  // 1/5!
+    p = vfmaq_f32(vdupq_n_f32(-1.0f/6.0f), p, x2);   // -1/3!
+    p = vfmaq_f32(vdupq_n_f32(1.0f), p, x2);         // 1
+    
+    return vmulq_f32(x, p);
+}
+
+// NEON cos approximation for float32x4_t
+inline float32x4_t neon_cos_ps(float32x4_t x) {
+    // Range reduction to [-pi, pi]
+    const float32x4_t inv_pi = vdupq_n_f32(0.318309886f);
+    const float32x4_t pi = vdupq_n_f32(3.141592654f);
+    const float32x4_t two_pi = vdupq_n_f32(6.283185307f);
+    
+    // Reduce x to [-pi, pi]
+    float32x4_t k = vrndnq_f32(vmulq_f32(x, inv_pi));
+    x = vfmsq_f32(x, k, two_pi);
+    
+    // Taylor series approximation
+    float32x4_t x2 = vmulq_f32(x, x);
+    float32x4_t p = vdupq_n_f32(1.0f/720.0f);     // 1/6!
+    p = vfmaq_f32(vdupq_n_f32(-1.0f/24.0f), p, x2);  // -1/4!
+    p = vfmaq_f32(vdupq_n_f32(1.0f/2.0f), p, x2);    // 1/2!
+    p = vfmaq_f32(vdupq_n_f32(-1.0f), p, x2);        // -1
+    
+    return vaddq_f32(vdupq_n_f32(1.0f), vmulq_f32(x2, p));
+}
+
+// NEON atan2 approximation for float32x4_t
+inline float32x4_t neon_atan2_ps(float32x4_t y, float32x4_t x) {
+    const float32x4_t pi = vdupq_n_f32(3.141592654f);
+    const float32x4_t pi_2 = vdupq_n_f32(1.570796327f);
+    
+    // Compute atan(y/x)
+    float32x4_t abs_x = vabsq_f32(x);
+    float32x4_t abs_y = vabsq_f32(y);
+    float32x4_t min_xy = vminq_f32(abs_x, abs_y);
+    float32x4_t max_xy = vmaxq_f32(abs_x, abs_y);
+    
+    // Avoid division by zero
+    float32x4_t a = vdivq_f32(min_xy, vaddq_f32(max_xy, vdupq_n_f32(1e-10f)));
+    float32x4_t s = vmulq_f32(a, a);
+    
+    // Polynomial approximation
+    float32x4_t r = vdupq_n_f32(-0.0464964749f);
+    r = vfmaq_f32(vdupq_n_f32(0.15931422f), r, s);
+    r = vfmaq_f32(vdupq_n_f32(-0.327622764f), r, s);
+    r = vmulq_f32(r, vmulq_f32(s, a));
+    r = vaddq_f32(a, r);
+    
+    // Adjust based on quadrant
+    uint32x4_t mask = vcgtq_f32(abs_y, abs_x);
+    r = vbslq_f32(mask, vsubq_f32(pi_2, r), r);
+    
+    // Adjust sign based on input signs
+    r = vbslq_f32(vreinterpretq_u32_f32(x), r, vsubq_f32(pi, r));
+    r = vbslq_f32(vreinterpretq_u32_f32(y), r, vnegq_f32(r));
+    
+    return r;
 }
 #endif
 

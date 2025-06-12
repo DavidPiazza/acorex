@@ -87,6 +87,12 @@ void ExplorerMenu::Initialise ( bool HiDpi )
 			}
 
 			bool needStatisticDropdowns = !mRawView->IsTimeAnalysis ( ) && !mRawView->IsReduction ( );
+			
+			// Note: Transport analysis dimensions are not yet supported in the UI
+			if ( mRawView->IsTransportAnalysis ( ) && mRawView->GetDimensions ( ).size ( ) == 0 )
+			{
+				ofLogWarning ( "ExplorerMenu" ) << "Transport analysis detected but no Transport dimensions available in UI yet";
+			}
 
 			mMainPanel.add ( mDimensionDropdownX.get ( ) );
 			mMainPanel.add ( mDimensionDropdownY.get ( ) );
@@ -134,6 +140,12 @@ void ExplorerMenu::Initialise ( bool HiDpi )
 		mMorphModeToggle.setup("Morph Mode", false); // Disabled due to Eigen assertion
 		mMorphModeToggle.setBackgroundColor(mColors.interfaceBackgroundColor);
 		
+		mContinuousMorphModeToggle.setup("Continuous Morph Mode", false);
+		mContinuousMorphModeToggle.setBackgroundColor(mColors.interfaceBackgroundColor);
+		
+		mKDTreeNeighborsField.setup("KD-Tree Neighbors", 3, 1, 20);
+		mKDTreeNeighborsField.setBackgroundColor(mColors.interfaceBackgroundColor);
+		
 		mTransitionDurationSlider.setup("Transition Duration", 0.5, 0.1, 5.0);
 		mTransitionDurationSlider.setBackgroundColor(mColors.interfaceBackgroundColor);
 		
@@ -152,6 +164,8 @@ void ExplorerMenu::Initialise ( bool HiDpi )
 		
 		// Add controls to panel
 		mMorphPanel.add(&mMorphModeToggle);
+		mMorphPanel.add(&mContinuousMorphModeToggle);
+		mMorphPanel.add(&mKDTreeNeighborsField);
 		mMorphPanel.add(&mTransitionDurationSlider);
 		mMorphPanel.add(&mSTFTSizeSlider);
 		mMorphPanel.add(&mInterpolationPositionSlider);
@@ -289,6 +303,8 @@ void ExplorerMenu::Initialise ( bool HiDpi )
 		
 		// Morph Mode Listeners
 		mMorphModeToggle.addListener ( this, &ExplorerMenu::onMorphModeChanged );
+		mContinuousMorphModeToggle.addListener ( this, &ExplorerMenu::onContinuousMorphModeChanged );
+		mKDTreeNeighborsField.addListener ( this, &ExplorerMenu::onKDTreeNeighborsChanged );
 		mTransitionDurationSlider.addListener ( this, &ExplorerMenu::onTransitionDurationChanged );
 		mSTFTSizeSlider.addListener ( this, &ExplorerMenu::onSTFTSizeChanged );
 		mInterpolationPositionSlider.addListener ( this, &ExplorerMenu::onInterpolationPositionChanged );
@@ -437,6 +453,52 @@ void ExplorerMenu::OpenCorpus ( )
 
 	bool success = mRawView->LoadCorpus ( );
 	if ( !success ) { return; }
+	
+	// Check what types of analysis the corpus contains
+	bool hasTimeAnalysis = mRawView->IsTimeAnalysis ( );
+	bool hasTransportAnalysis = mRawView->IsTransportAnalysis ( );
+	bool hasTransportData = mRawView->HasTransportData ( );
+	
+	if ( hasTimeAnalysis )
+	{
+		ofLogNotice ( "ExplorerMenu" ) << "Corpus has Time analysis";
+	}
+	if ( hasTransportAnalysis )
+	{
+		ofLogNotice ( "ExplorerMenu" ) << "Corpus has Transport analysis enabled";
+		if ( hasTransportData )
+		{
+			auto transportData = mRawView->GetTransportData ( );
+			ofLogNotice ( "ExplorerMenu" ) << "Transport data present for " << transportData->fileCount() << " files";
+		}
+		else
+		{
+			ofLogWarning ( "ExplorerMenu" ) << "Transport analysis enabled but no Transport data found";
+		}
+	}
+	
+	// Enable/disable Continuous Morph Mode based on analysis types
+	bool canUseContinuousMorph = hasTimeAnalysis && hasTransportAnalysis && hasTransportData;
+	mContinuousMorphModeToggle.setBackgroundColor(canUseContinuousMorph ? 
+		mColors.interfaceBackgroundColor : ofColor(60, 60, 60));
+	mContinuousMorphModeToggle.setTextColor(canUseContinuousMorph ? 
+		ofColor(255) : ofColor(120));
+	
+	// Also configure the KD-tree neighbors field
+	mKDTreeNeighborsField.setBackgroundColor(canUseContinuousMorph ? 
+		mColors.interfaceBackgroundColor : ofColor(60, 60, 60));
+	mKDTreeNeighborsField.setTextColor(canUseContinuousMorph ? 
+		ofColor(255) : ofColor(120));
+	
+	if (!canUseContinuousMorph)
+	{
+		mContinuousMorphModeToggle = false; // Ensure it's off if not available
+		ofLogNotice("ExplorerMenu") << "Continuous Morph Mode disabled - requires both Time and Transport analysis";
+	}
+	else
+	{
+		ofLogNotice("ExplorerMenu") << "Continuous Morph Mode available";
+	}
 	
 	bInitialiseShouldLoad = true;
 	Initialise ( mLayout.HiDpi );
@@ -622,6 +684,31 @@ void ExplorerMenu::onMorphModeChanged ( bool& enabled )
 	if ( mLiveView.GetAudioPlayback ( ) )
 	{
 		mLiveView.GetAudioPlayback ( )->SetMorphMode ( enabled );
+	}
+}
+
+void ExplorerMenu::onContinuousMorphModeChanged ( bool& enabled )
+{
+	if ( mLiveView.GetAudioPlayback ( ) )
+	{
+		// Set the playback mode based on the toggle state
+		if ( enabled )
+		{
+			mLiveView.GetAudioPlayback ( )->SetPlaybackMode ( Explorer::AudioPlayback::PlaybackMode::CONTINUOUS );
+		}
+		else
+		{
+			mLiveView.GetAudioPlayback ( )->SetPlaybackMode ( Explorer::AudioPlayback::PlaybackMode::DISCRETE );
+		}
+	}
+}
+
+void ExplorerMenu::onKDTreeNeighborsChanged ( int& count )
+{
+	if ( mLiveView.GetAudioPlayback ( ) )
+	{
+		mLiveView.GetAudioPlayback ( )->SetKDTreeNeighbors ( count );
+		ofLogNotice("ExplorerMenu") << "KD-tree neighbors changed to: " << count;
 	}
 }
 

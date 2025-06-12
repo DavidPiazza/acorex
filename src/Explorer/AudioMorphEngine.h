@@ -66,6 +66,10 @@ public:
     
     // Configure FFT parameters
     void SetFFTParameters(size_t windowSize, size_t fftSize, size_t hopSize);
+    
+    // Configure KD-tree query parameters
+    void SetNumNeighbors(int numNeighbors) { mNumNeighbors = numNeighbors; }
+    int GetNumNeighbors() const { return mNumNeighbors; }
 
 private:
     int mSampleRate;
@@ -113,6 +117,7 @@ private:
     
     // KD-tree instance (shared with other components)
     std::shared_ptr<KDTree> mKDTree;
+    int mNumNeighbors = 3; // Default to 3 neighbors
 
     // Thread-safety for real-time operation (mutable for const query methods)
     mutable std::mutex mProcessMutex;

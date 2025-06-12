@@ -166,7 +166,7 @@ void Explorer::AudioPlayback::audioOut ( ofSoundBuffer& outBuffer )
 		// Move newly created playheads into the active list
 		while ( !mNewPlayheads.empty ( ) )
 		{
-			mPlayheads.push_back ( mNewPlayheads.front ( ) );
+			mPlayheads.push_back ( std::move ( mNewPlayheads.front ( ) ) );
 			mNewPlayheads.pop ( );
 		}
 
@@ -636,7 +636,7 @@ bool Explorer::AudioPlayback::CreatePlayhead ( size_t fileIndex, size_t sampleIn
 			return false;
 		}
 		
-		mNewPlayheads.push ( newPlayhead );
+		mNewPlayheads.push ( std::move ( newPlayhead ) );
 	}
 
 	return true;
@@ -1217,6 +1217,19 @@ void Explorer::AudioPlayback::SetKDTreeForMorphEngine ( const std::shared_ptr<fl
 	else
 	{
 		ofLogWarning ( "AudioPlayback" ) << "Cannot set KD-tree: AudioMorphEngine not initialized";
+	}
+}
+
+void Explorer::AudioPlayback::SetKDTreeNeighbors ( int numNeighbors )
+{
+	mKDTreeNeighbors = numNeighbors;
+	ofLogNotice ( "AudioPlayback" ) << "KD-tree neighbors set to: " << numNeighbors;
+	
+	// Update the AudioMorphEngine with the new neighbor count
+	if ( mAudioMorphEngine )
+	{
+		mAudioMorphEngine->SetNumNeighbors ( numNeighbors );
+		ofLogNotice ( "AudioPlayback" ) << "Updated AudioMorphEngine with " << numNeighbors << " neighbors";
 	}
 }
 

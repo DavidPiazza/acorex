@@ -43,6 +43,11 @@ bool Explorer::RawView::IsTimeAnalysis ( ) const
 	return mDataset.analysisSettings.bTime;
 }
 
+bool Explorer::RawView::IsTransportAnalysis ( ) const
+{
+	return mDataset.analysisSettings.bTransport;
+}
+
 bool Explorer::RawView::IsReduction ( ) const
 {
 	return mDataset.analysisSettings.hasBeenReduced;
@@ -81,4 +86,14 @@ Utils::DataSet* Explorer::RawView::GetDataset ( )
 Utils::AudioData* Explorer::RawView::GetAudioData ( )
 {
 	return &mDataset.audio;
+}
+
+Utils::TransportData* Explorer::RawView::GetTransportData ( )
+{
+	return &mDataset.transport;
+}
+
+bool Explorer::RawView::HasTransportData ( ) const
+{
+	return mDataset.analysisSettings.bTransport && mDataset.transport.fileCount() > 0;
 }

@@ -100,6 +100,7 @@ public:
 	// AudioMorphEngine integration
 	std::shared_ptr<AudioMorphEngine> GetAudioMorphEngine ( ) { return mAudioMorphEngine; }
 	void SetKDTreeForMorphEngine ( const std::shared_ptr<fluid::algorithm::KDTree>& kdTree );
+	void SetKDTreeNeighbors ( int numNeighbors );
 	
 	// Sub-frame accurate playhead tracking
 	double GetPlayheadPosition ( size_t playheadID ) const;
@@ -196,6 +197,7 @@ private:
 	
 	// ---------------- Playback mode management ----------------
 	std::atomic<PlaybackMode> mPlaybackMode{PlaybackMode::DISCRETE};
+	std::atomic<int> mKDTreeNeighbors{3};
 	std::shared_ptr<AudioMorphEngine> mAudioMorphEngine;
 	
 	// Configuration flags for mode behavior

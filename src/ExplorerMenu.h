@@ -45,6 +45,8 @@ private:
 	
 	// Morph Mode Listener Functions ---------------
 	void onMorphModeChanged ( bool& enabled );
+	void onContinuousMorphModeChanged ( bool& enabled );
+	void onKDTreeNeighborsChanged ( int& count );
 	void onTransitionDurationChanged ( float& duration );
 	void onSTFTSizeChanged ( int& size );
 	void onInterpolationPositionChanged ( float& position );
@@ -97,6 +99,8 @@ private:
 	// Morph Mode Controls -------------------------
 	ofxPanel mMorphPanel;
 	ofxToggle mMorphModeToggle;
+	ofxToggle mContinuousMorphModeToggle;
+	ofxIntField mKDTreeNeighborsField;
 	ofxFloatSlider mTransitionDurationSlider;
 	ofxIntSlider mSTFTSizeSlider;
 	ofxFloatSlider mInterpolationPositionSlider;

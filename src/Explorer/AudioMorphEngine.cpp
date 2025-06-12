@@ -384,7 +384,7 @@ void AudioMorphEngine::ProcessNextFrame() {
         queryPoint[i] = 0.0;
     }
     
-    auto knnResult = QueryKNearest(queryPoint, 3); // Get 3 nearest neighbors
+    auto knnResult = QueryKNearest(queryPoint, mNumNeighbors); // Get configured number of nearest neighbors
     if (knnResult.first.size() == 0) {
         // No results - generate silence
         std::vector<float> silentFrame(mWindowSize, 0.0f);
